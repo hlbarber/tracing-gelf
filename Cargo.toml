@@ -1,0 +1,13 @@
+[package]
+name = "tracing-gelf"
+version = "0.1.0"
+authors = ["Harry  Barber <hlbarber93@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+hostname = "0.2.0"
+serde_json = "1.0.44"
+tokio = { version = "0.2.5", feature = ["tcp"] }
+tracing-core = "0.1.7"
+tracing-subscriber = "0.2.0-alpha.2"
+tracing-serde = "0.1.0"
