@@ -1,12 +1,15 @@
 use std::collections::HashMap;
-use std::net::ToSocketAddrs;
-use std::sync::Arc;
+use std::future::Future;
 
+use bytes::Bytes;
+use futures_channel::mpsc;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio_util::codec::{BytesCodec, FramedWrite};
 use tracing_core::{span, Event, Metadata, Subscriber};
 use tracing_serde::AsSerde;
-use tracing_subscriber::{registry::LookupSpan, Registry};
+use tracing_subscriber::Registry;
 
 #[derive(Debug)]
 pub struct TcpLogger {
@@ -18,6 +21,7 @@ pub struct TcpLogger {
     module_paths: bool,
     spans: bool,
     registry: Registry,
+    sender: mpsc::Sender<Bytes>,
 }
 
 impl TcpLogger {
@@ -33,7 +37,7 @@ pub enum TcpBuilderError {
     OsString(std::ffi::OsString),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TcpBuilder {
     additional_fields: HashMap<String, Value>,
     version: Option<String>,
@@ -55,6 +59,8 @@ impl Default for TcpBuilder {
         }
     }
 }
+
+type BackgroundTask = std::pin::Pin<Box<dyn Future<Output = ()>>>;
 
 impl TcpBuilder {
     /// Add a persistent additional field to the GELF messages.
@@ -81,7 +87,14 @@ impl TcpBuilder {
         self
     }
 
-    pub fn connect<A: ToSocketAddrs>(self, addr: A) -> Result<TcpLogger, TcpBuilderError> {
+    pub fn connect<A>(
+        self,
+        addr: A,
+        buffer: usize,
+    ) -> Result<(TcpLogger, BackgroundTask), TcpBuilderError>
+    where
+        A: ToSocketAddrs + 'static + Clone,
+    {
         // Get hostname
         let hostname = hostname::get()
             .map_err(TcpBuilderError::HostnameResolution)?
@@ -93,7 +106,26 @@ impl TcpBuilder {
             "1.1".to_string()
         };
 
-        Ok(TcpLogger {
+        // Construct background task
+        let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
+        let mut ok_receiver = receiver.map(|x| Ok(x));
+
+        let bg_task = Box::pin(async move {
+            // Reconnection loop
+            loop {
+                // Try connect
+                let mut tcp_stream = match TcpStream::connect(addr.clone()).await {
+                    Ok(ok) => ok,
+                    Err(_) => continue,
+                };
+
+                // Writer
+                let (_, writer) = tcp_stream.split();
+                let mut sink = FramedWrite::new(writer, BytesCodec::new());
+                sink.send_all(&mut ok_receiver).await;
+            }
+        });
+        let logger = TcpLogger {
             additional_fields: self.additional_fields,
             hostname,
             version,
@@ -102,7 +134,10 @@ impl TcpBuilder {
             module_paths: self.module_paths,
             spans: self.spans,
             registry: Default::default(),
-        })
+            sender,
+        };
+
+        Ok((logger, bg_task))
     }
 }
 
@@ -170,17 +205,14 @@ impl Subscriber for TcpLogger {
 
         if let Ok(Value::Object(mut map)) = serde_json::to_value(event.as_serde()) {
             // Must contain short_message
-            println!("and here :O");
             if !map.contains_key("short_message") {
                 return;
             }
 
             for (key, value) in &self.additional_fields {
-                map.insert(format!("_{}", key), value.clone()); // Probably can't avoid clone here
+                map.insert(format!("_{}", key), value.clone());
             }
             map.insert("version".to_string(), self.version.clone().into());
-
-            println!("{:?}", map);
         }
     }
 
