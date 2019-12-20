@@ -6,7 +6,7 @@ use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{map::Map, Value};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::net::{TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tracing_core::dispatcher::SetGlobalDefaultError;
@@ -18,7 +18,7 @@ const DEFAULT_TIMEOUT: u32 = 10_000;
 const DEFAULT_VERSION: &str = "1.1";
 
 #[derive(Debug)]
-pub struct TcpLogger {
+pub struct Logger {
     version: String,
     hostname: String,
     additional_fields: Map<String, Value>,
@@ -30,14 +30,14 @@ pub struct TcpLogger {
     sender: mpsc::Sender<Bytes>,
 }
 
-impl TcpLogger {
-    pub fn builder() -> TcpBuilder {
-        TcpBuilder::default()
+impl Logger {
+    pub fn builder() -> Builder {
+        Builder::default()
     }
 }
 
 #[derive(Debug)]
-pub enum TcpBuilderError {
+pub enum BuilderError {
     MissingHost,
     HostnameResolution(std::io::Error),
     OsString(std::ffi::OsString),
@@ -45,7 +45,7 @@ pub enum TcpBuilderError {
 }
 
 #[derive(Debug)]
-pub struct TcpBuilder {
+pub struct Builder {
     additional_fields: Map<String, Value>,
     version: Option<String>,
     file_names: bool,
@@ -56,9 +56,9 @@ pub struct TcpBuilder {
     buffer: Option<usize>,
 }
 
-impl Default for TcpBuilder {
+impl Default for Builder {
     fn default() -> Self {
-        TcpBuilder {
+        Builder {
             additional_fields: Map::with_capacity(32),
             version: None,
             file_names: true,
@@ -73,7 +73,7 @@ impl Default for TcpBuilder {
 
 type BackgroundTask = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
 
-impl TcpBuilder {
+impl Builder {
     /// Add a persistent additional field to the GELF messages.
     pub fn additional_field<K: ToString, V: Into<Value>>(&mut self, key: K, value: V) -> &mut Self {
         self.additional_fields.insert(key.to_string(), value.into());
@@ -115,17 +115,17 @@ impl TcpBuilder {
         self
     }
 
-    /// Return `TcpLogger` and connection background task.
-    pub fn connect<A>(self, addr: A) -> Result<(TcpLogger, BackgroundTask), TcpBuilderError>
+    /// Return `Logger` and TCP connection background task.
+    pub fn connect_tcp<A>(self, addr: A) -> Result<(Logger, BackgroundTask), BuilderError>
     where
         A: ToSocketAddrs,
         A: 'static + Clone + Send + Sync,
     {
         // Get hostname
         let hostname = hostname::get()
-            .map_err(TcpBuilderError::HostnameResolution)?
+            .map_err(BuilderError::HostnameResolution)?
             .into_string()
-            .map_err(TcpBuilderError::OsString)?;
+            .map_err(BuilderError::OsString)?;
 
         // Get timeout
         let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
@@ -154,7 +154,7 @@ impl TcpBuilder {
                 sink.send_all(&mut ok_receiver).await;
             }
         });
-        let logger = TcpLogger {
+        let logger = Logger {
             additional_fields: self.additional_fields,
             hostname,
             version,
@@ -169,22 +169,90 @@ impl TcpBuilder {
         Ok((logger, bg_task))
     }
 
-    /// Initialize and return background task.
-    pub fn init<A>(self, addr: A) -> Result<BackgroundTask, TcpBuilderError>
+    /// Initialize and return TCP connection background task.
+    pub fn init_tcp<A>(self, addr: A) -> Result<BackgroundTask, BuilderError>
     where
         A: ToSocketAddrs,
         A: 'static + Clone + Send + Sync,
     {
-        let (logger, bg_task) = self.connect(addr)?;
+        let (logger, bg_task) = self.connect_tcp(addr)?;
         tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
             logger,
         ))
-        .map_err(TcpBuilderError::Global)?;
+        .map_err(BuilderError::Global)?;
+        Ok(bg_task)
+    }
+
+    /// Return `Logger` and a UDP connection background task.
+    pub fn connect_udp<A>(self, addr: A) -> Result<(Logger, BackgroundTask), BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: 'static + Clone + Send + Sync,
+    {
+        // Get hostname
+        let hostname = hostname::get()
+            .map_err(BuilderError::HostnameResolution)?
+            .into_string()
+            .map_err(BuilderError::OsString)?;
+
+        // Get timeout
+        let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
+        let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
+        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
+
+        // Construct background task
+        let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
+
+        let bg_task = Box::pin(async move {
+            // Reconnection loop
+            loop {
+                // Try connect
+                let mut udp_socket = match UdpSocket::bind("0.0.0.0:0").await {
+                    Ok(ok) => ok,
+                    Err(_) => {
+                        time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
+                        continue;
+                    }
+                };
+
+                if let Err(_) = udp_socket.connect(addr.clone()).await {
+                    continue;
+                };
+
+                // TODO: Writer
+            }
+        });
+        let logger = Logger {
+            additional_fields: self.additional_fields,
+            hostname,
+            version,
+            file_names: self.file_names,
+            line_numbers: self.line_numbers,
+            module_paths: self.module_paths,
+            spans: self.spans,
+            registry: Default::default(),
+            sender,
+        };
+
+        Ok((logger, bg_task))
+    }
+
+    /// Initialize and return UDP connection background task.
+    pub fn init_udp<A>(self, addr: A) -> Result<BackgroundTask, BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: 'static + Clone + Send + Sync,
+    {
+        let (logger, bg_task) = self.connect_udp(addr)?;
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            logger,
+        ))
+        .map_err(BuilderError::Global)?;
         Ok(bg_task)
     }
 }
 
-impl Subscriber for TcpLogger {
+impl Subscriber for Logger {
     fn enabled(&self, _: &Metadata<'_>) -> bool {
         // TODO: Log level filtering or layering will replace this
         true
