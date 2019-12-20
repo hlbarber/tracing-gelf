@@ -9,10 +9,12 @@ use serde_json::{map::Map, Value};
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
+use tracing_core::dispatcher::SetGlobalDefaultError;
 use tracing_core::{span, Event, Metadata, Subscriber};
 use tracing_subscriber::Registry;
 
-const DEFAULT_TIMEOUT: u32 = 1_000;
+const DEFAULT_BUFFER: usize = 512;
+const DEFAULT_TIMEOUT: u32 = 10_000;
 const DEFAULT_VERSION: &str = "1.1";
 
 #[derive(Debug)]
@@ -39,6 +41,7 @@ pub enum TcpBuilderError {
     MissingHost,
     HostnameResolution(std::io::Error),
     OsString(std::ffi::OsString),
+    Global(SetGlobalDefaultError),
 }
 
 #[derive(Debug)]
@@ -50,6 +53,7 @@ pub struct TcpBuilder {
     module_paths: bool,
     spans: bool,
     timeout_ms: Option<u32>,
+    buffer: Option<usize>,
 }
 
 impl Default for TcpBuilder {
@@ -62,6 +66,7 @@ impl Default for TcpBuilder {
             module_paths: true,
             spans: true,
             timeout_ms: None,
+            buffer: None,
         }
     }
 }
@@ -73,6 +78,11 @@ impl TcpBuilder {
     pub fn additional_field<K: ToString, V: Into<Value>>(&mut self, key: K, value: V) -> &mut Self {
         self.additional_fields.insert(key.to_string(), value.into());
         self
+    }
+
+    /// Set the GELF version number. Defaults to "1.1".
+    pub fn version<S: ToString>(&mut self, version: S) {
+        self.version = Some(version.to_string());
     }
 
     /// Set whether line numbers should be logged. Defaults to true.
@@ -93,18 +103,20 @@ impl TcpBuilder {
         self
     }
 
-    /// Set the reconnection timeout in milliseconds.
+    /// Set the reconnection timeout in milliseconds. Defaults to 10 seconds.
     pub fn reconnection_timeout(&mut self, millis: u32) -> &mut Self {
         self.timeout_ms = Some(millis);
         self
     }
 
-    /// Connect and yeild logger.
-    pub fn connect<A>(
-        self,
-        addr: A,
-        buffer: usize,
-    ) -> Result<(TcpLogger, BackgroundTask), TcpBuilderError>
+    /// Sets the buffer length. Defaults to 512.
+    pub fn buffer(&mut self, length: usize) -> &mut Self {
+        self.buffer = Some(length);
+        self
+    }
+
+    /// Return `TcpLogger` and connection background task.
+    pub fn connect<A>(self, addr: A) -> Result<(TcpLogger, BackgroundTask), TcpBuilderError>
     where
         A: ToSocketAddrs,
         A: 'static + Clone + Send + Sync,
@@ -114,14 +126,15 @@ impl TcpBuilder {
             .map_err(TcpBuilderError::HostnameResolution)?
             .into_string()
             .map_err(TcpBuilderError::OsString)?;
+
+        // Get timeout
+        let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
+        let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
         let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
         let mut ok_receiver = receiver.map(Ok);
-
-        // Get timeout
-        let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
 
         let bg_task = Box::pin(async move {
             // Reconnection loop
@@ -154,6 +167,20 @@ impl TcpBuilder {
         };
 
         Ok((logger, bg_task))
+    }
+
+    /// Initialize and return background task.
+    pub fn init<A>(self, addr: A) -> Result<BackgroundTask, TcpBuilderError>
+    where
+        A: ToSocketAddrs,
+        A: 'static + Clone + Send + Sync,
+    {
+        let (logger, bg_task) = self.connect(addr)?;
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            logger,
+        ))
+        .map_err(TcpBuilderError::Global)?;
+        Ok(bg_task)
     }
 }
 
