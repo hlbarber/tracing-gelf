@@ -1,21 +1,21 @@
-use std::collections::HashMap;
+mod visitor;
+
 use std::future::Future;
 
 use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::Value;
+use serde_json::{map::Map, Value};
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tracing_core::{span, Event, Metadata, Subscriber};
-use tracing_serde::AsSerde;
 use tracing_subscriber::Registry;
 
 #[derive(Debug)]
 pub struct TcpLogger {
     version: String,
     hostname: String,
-    additional_fields: HashMap<String, Value>,
+    additional_fields: Map<String, Value>,
     line_numbers: bool,
     file_names: bool,
     module_paths: bool,
@@ -39,7 +39,7 @@ pub enum TcpBuilderError {
 
 #[derive(Debug)]
 pub struct TcpBuilder {
-    additional_fields: HashMap<String, Value>,
+    additional_fields: Map<String, Value>,
     version: Option<String>,
     file_names: bool,
     line_numbers: bool,
@@ -50,7 +50,7 @@ pub struct TcpBuilder {
 impl Default for TcpBuilder {
     fn default() -> Self {
         TcpBuilder {
-            additional_fields: HashMap::with_capacity(32),
+            additional_fields: Map::with_capacity(32),
             version: None,
             file_names: true,
             line_numbers: true,
@@ -93,7 +93,8 @@ impl TcpBuilder {
         buffer: usize,
     ) -> Result<(TcpLogger, BackgroundTask), TcpBuilderError>
     where
-        A: ToSocketAddrs + 'static + Clone,
+        A: ToSocketAddrs,
+        A: 'static + Clone,
     {
         // Get hostname
         let hostname = hostname::get()
@@ -108,7 +109,7 @@ impl TcpBuilder {
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
-        let mut ok_receiver = receiver.map(|x| Ok(x));
+        let mut ok_receiver = receiver.map(Ok);
 
         let bg_task = Box::pin(async move {
             // Reconnection loop
@@ -159,7 +160,11 @@ impl Subscriber for TcpLogger {
 
     fn event(&self, event: &Event<'_>) {
         // GELF object
-        let mut object: HashMap<String, Value> = HashMap::with_capacity(32);
+        let mut object: Map<String, Value> = Map::with_capacity(32);
+
+        // Add persistent fields
+        object.insert("version".to_string(), self.version.clone().into());
+        object.insert("host".to_string(), self.hostname.clone().into());
 
         // Get span name
         if self.spans {
@@ -203,17 +208,13 @@ impl Subscriber for TcpLogger {
             }
         }
 
-        if let Ok(Value::Object(mut map)) = serde_json::to_value(event.as_serde()) {
-            // Must contain short_message
-            if !map.contains_key("short_message") {
-                return;
-            }
+        let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
+        event.record(&mut add_field_visitor);
 
-            for (key, value) in &self.additional_fields {
-                map.insert(format!("_{}", key), value.clone());
-            }
-            map.insert("version".to_string(), self.version.clone().into());
-        }
+        let final_object = Value::Object(object);
+        let mut raw = serde_json::to_vec(&final_object).unwrap(); // This is safe
+        raw.push(0);
+        self.sender.clone().try_send(Bytes::from(raw));
     }
 
     fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
