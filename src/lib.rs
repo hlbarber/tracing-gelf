@@ -7,9 +7,13 @@ use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{map::Map, Value};
 use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tracing_core::{span, Event, Metadata, Subscriber};
 use tracing_subscriber::Registry;
+
+const DEFAULT_TIMEOUT: u32 = 1_000;
+const DEFAULT_VERSION: &str = "1.1";
 
 #[derive(Debug)]
 pub struct TcpLogger {
@@ -45,6 +49,7 @@ pub struct TcpBuilder {
     line_numbers: bool,
     module_paths: bool,
     spans: bool,
+    timeout_ms: Option<u32>,
 }
 
 impl Default for TcpBuilder {
@@ -56,11 +61,12 @@ impl Default for TcpBuilder {
             line_numbers: true,
             module_paths: true,
             spans: true,
+            timeout_ms: None,
         }
     }
 }
 
-type BackgroundTask = std::pin::Pin<Box<dyn Future<Output = ()>>>;
+type BackgroundTask = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl TcpBuilder {
     /// Add a persistent additional field to the GELF messages.
@@ -75,18 +81,25 @@ impl TcpBuilder {
         self
     }
 
-    /// Sets whether file names should be logged. Defaults to true.
+    /// Set whether file names should be logged. Defaults to true.
     pub fn file_names(&mut self, value: bool) -> &mut Self {
         self.file_names = value;
         self
     }
 
-    /// Sets whether module paths should be logged. Defaults to true.
+    /// Set whether module paths should be logged. Defaults to true.
     pub fn module_paths(&mut self, value: bool) -> &mut Self {
         self.module_paths = value;
         self
     }
 
+    /// Set the reconnection timeout in milliseconds.
+    pub fn reconnection_timeout(&mut self, millis: u32) -> &mut Self {
+        self.timeout_ms = Some(millis);
+        self
+    }
+
+    /// Connect and yeild logger.
     pub fn connect<A>(
         self,
         addr: A,
@@ -94,22 +107,21 @@ impl TcpBuilder {
     ) -> Result<(TcpLogger, BackgroundTask), TcpBuilderError>
     where
         A: ToSocketAddrs,
-        A: 'static + Clone,
+        A: 'static + Clone + Send + Sync,
     {
         // Get hostname
         let hostname = hostname::get()
             .map_err(TcpBuilderError::HostnameResolution)?
             .into_string()
             .map_err(TcpBuilderError::OsString)?;
-        let version = if let Some(version) = self.version {
-            version
-        } else {
-            "1.1".to_string()
-        };
+        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
         let mut ok_receiver = receiver.map(Ok);
+
+        // Get timeout
+        let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
 
         let bg_task = Box::pin(async move {
             // Reconnection loop
@@ -117,7 +129,10 @@ impl TcpBuilder {
                 // Try connect
                 let mut tcp_stream = match TcpStream::connect(addr.clone()).await {
                     Ok(ok) => ok,
-                    Err(_) => continue,
+                    Err(_) => {
+                        time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
+                        continue;
+                    }
                 };
 
                 // Writer
@@ -173,9 +188,7 @@ impl Subscriber for TcpLogger {
             }
         }
 
-        /////
         // Extract metadata
-
         // Insert level
         let metadata = event.metadata();
         let level_num = match *metadata.level() {
@@ -208,12 +221,16 @@ impl Subscriber for TcpLogger {
             }
         }
 
+        // Append additional fields
         let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
         event.record(&mut add_field_visitor);
 
+        // Serialize
         let final_object = Value::Object(object);
         let mut raw = serde_json::to_vec(&final_object).unwrap(); // This is safe
         raw.push(0);
+
+        // Send
         self.sender.clone().try_send(Bytes::from(raw));
     }
 
