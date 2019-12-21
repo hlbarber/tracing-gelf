@@ -10,7 +10,8 @@ use tokio::net::{TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tracing_core::dispatcher::SetGlobalDefaultError;
-use tracing_core::{span, Event, Metadata, Subscriber};
+use tracing_core::{span, Event, Subscriber};
+use tracing_subscriber::layer::{Context, Layer, Layered};
 use tracing_subscriber::Registry;
 
 const DEFAULT_BUFFER: usize = 512;
@@ -26,7 +27,6 @@ pub struct Logger {
     file_names: bool,
     module_paths: bool,
     spans: bool,
-    registry: Registry,
     sender: mpsc::Sender<Bytes>,
 }
 
@@ -81,7 +81,7 @@ impl Builder {
     }
 
     /// Set the GELF version number. Defaults to "1.1".
-    pub fn version<S: ToString>(&mut self, version: S) {
+    pub fn version<V: ToString>(&mut self, version: V) {
         self.version = Some(version.to_string());
     }
 
@@ -162,28 +162,45 @@ impl Builder {
             line_numbers: self.line_numbers,
             module_paths: self.module_paths,
             spans: self.spans,
-            registry: Default::default(),
             sender,
         };
 
         Ok((logger, bg_task))
     }
 
-    /// Initialize and return TCP connection background task.
+    /// Initialize logging with a given `Subscriber` and return TCP connection background task.
+    pub fn init_tcp_with_subscriber<A, S>(
+        self,
+        addr: A,
+        subscriber: S,
+    ) -> Result<BackgroundTask, BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: 'static + Clone + Send + Sync,
+        S: Subscriber + Send + Sync + 'static,
+    {
+        let (logger, bg_task) = self.connect_tcp(addr)?;
+
+        // If a subscriber was set then use it as the inner subscriber.
+        let subscriber = logger.with_subscriber(subscriber);
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            subscriber,
+        ))
+        .map_err(BuilderError::Global)?;
+
+        Ok(bg_task)
+    }
+
+    /// Initialize logging and return TCP connection background task.
     pub fn init_tcp<A>(self, addr: A) -> Result<BackgroundTask, BuilderError>
     where
         A: ToSocketAddrs,
         A: 'static + Clone + Send + Sync,
     {
-        let (logger, bg_task) = self.connect_tcp(addr)?;
-        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
-            logger,
-        ))
-        .map_err(BuilderError::Global)?;
-        Ok(bg_task)
+        self.init_tcp_with_subscriber(addr, Registry::default())
     }
 
-    /// Return `Logger` and a UDP connection background task.
+    /// Return `Logger` layer and a UDP connection background task.
     pub fn connect_udp<A>(self, addr: A) -> Result<(Logger, BackgroundTask), BuilderError>
     where
         A: ToSocketAddrs,
@@ -215,7 +232,7 @@ impl Builder {
                     }
                 };
 
-                if let Err(_) = udp_socket.connect(addr.clone()).await {
+                if udp_socket.connect(addr.clone()).await.is_err() {
                     continue;
                 };
 
@@ -230,45 +247,50 @@ impl Builder {
             line_numbers: self.line_numbers,
             module_paths: self.module_paths,
             spans: self.spans,
-            registry: Default::default(),
             sender,
         };
 
         Ok((logger, bg_task))
     }
 
-    /// Initialize and return UDP connection background task.
+    /// Initialize logging with a given `Subscriber` and return UDP connection background task.
+    pub fn init_udp_with_subscriber<A, S>(
+        self,
+        addr: A,
+        subscriber: S,
+    ) -> Result<BackgroundTask, BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: 'static + Clone + Send + Sync,
+        S: Subscriber + Send + Sync + 'static,
+    {
+        let (logger, bg_task) = self.connect_udp(addr)?;
+        let subscriber = logger.with_subscriber(subscriber);
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            subscriber,
+        ))
+        .map_err(BuilderError::Global)?;
+
+        Ok(bg_task)
+    }
+
+    /// Initialize logging and return UDP connection background task.
     pub fn init_udp<A>(self, addr: A) -> Result<BackgroundTask, BuilderError>
     where
         A: ToSocketAddrs,
         A: 'static + Clone + Send + Sync,
     {
-        let (logger, bg_task) = self.connect_udp(addr)?;
-        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
-            logger,
-        ))
-        .map_err(BuilderError::Global)?;
-        Ok(bg_task)
+        self.init_udp_with_subscriber(addr, Registry::default())
     }
 }
 
-impl Subscriber for Logger {
-    fn enabled(&self, _: &Metadata<'_>) -> bool {
-        // TODO: Log level filtering or layering will replace this
-        true
-    }
-
+impl<S: Subscriber> Layer<S> for Logger {
     // I'm guessing we do nothing here because we don't want to broadcast
-    // a GELF message when we enter spans.
+    // a GELF message when we enter spans?
     #[inline]
-    fn record(&self, _: &span::Id, _: &span::Record<'_>) {}
+    fn on_record(&self, _: &span::Id, _: &span::Record<'_>, ctx: Context<S>) {}
 
-    #[inline]
-    fn new_span(&self, span: &span::Attributes<'_>) -> span::Id {
-        self.registry.new_span(span)
-    }
-
-    fn event(&self, event: &Event<'_>) {
+    fn on_event(&self, event: &Event<'_>, ctx: Context<S>) {
         // GELF object
         let mut object: Map<String, Value> = Map::with_capacity(32);
 
@@ -278,7 +300,7 @@ impl Subscriber for Logger {
 
         // Get span name
         if self.spans {
-            if let Some(metadata) = self.current_span().metadata() {
+            if let Some(metadata) = ctx.current_span().metadata() {
                 object.insert("_span".to_string(), metadata.name().into());
             }
         }
@@ -327,27 +349,5 @@ impl Subscriber for Logger {
 
         // Send
         self.sender.clone().try_send(Bytes::from(raw));
-    }
-
-    fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
-
-    fn enter(&self, id: &span::Id) {
-        self.registry.enter(id)
-    }
-
-    fn exit(&self, id: &span::Id) {
-        self.registry.exit(id)
-    }
-
-    fn clone_span(&self, id: &span::Id) -> span::Id {
-        self.registry.clone_span(id)
-    }
-
-    fn current_span(&self) -> span::Current {
-        self.registry.current_span()
-    }
-
-    fn try_close(&self, id: span::Id) -> bool {
-        self.registry.try_close(id)
     }
 }
