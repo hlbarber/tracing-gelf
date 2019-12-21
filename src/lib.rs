@@ -1,6 +1,7 @@
 mod visitor;
 
 use std::future::Future;
+use std::net::SocketAddr;
 
 use bytes::Bytes;
 use futures_channel::mpsc;
@@ -9,9 +10,10 @@ use serde_json::{map::Map, Value};
 use tokio::net::{TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
+use tokio_util::udp::UdpFramed;
 use tracing_core::dispatcher::SetGlobalDefaultError;
 use tracing_core::{span, Event, Subscriber};
-use tracing_subscriber::layer::{Context, Layer, Layered};
+use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::Registry;
 
 const DEFAULT_BUFFER: usize = 512;
@@ -36,14 +38,18 @@ impl Logger {
     }
 }
 
+/// The error type for `Logger` building.
 #[derive(Debug)]
 pub enum BuilderError {
-    MissingHost,
+    /// Could not resolve the hostname.
     HostnameResolution(std::io::Error),
+    /// Could not coerce the OsString into a string.
     OsString(std::ffi::OsString),
+    /// Global dispatcher failed.
     Global(SetGlobalDefaultError),
 }
 
+/// A builder for `Logger`.
 #[derive(Debug)]
 pub struct Builder {
     additional_fields: Map<String, Value>,
@@ -201,11 +207,10 @@ impl Builder {
     }
 
     /// Return `Logger` layer and a UDP connection background task.
-    pub fn connect_udp<A>(self, addr: A) -> Result<(Logger, BackgroundTask), BuilderError>
-    where
-        A: ToSocketAddrs,
-        A: 'static + Clone + Send + Sync,
-    {
+    pub fn connect_udp(
+        self,
+        addr: SocketAddr,
+    ) -> Result<(Logger, BackgroundTask), BuilderError> {
         // Get hostname
         let hostname = hostname::get()
             .map_err(BuilderError::HostnameResolution)?
@@ -219,12 +224,20 @@ impl Builder {
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
+        let mut ok_receiver = receiver.map(move |bytes| Ok((bytes, addr.clone())));
+
+        // Bind address version must match address version
+        let bind_addr = if addr.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
 
         let bg_task = Box::pin(async move {
             // Reconnection loop
             loop {
                 // Try connect
-                let mut udp_socket = match UdpSocket::bind("0.0.0.0:0").await {
+                let udp_socket = match UdpSocket::bind(bind_addr).await {
                     Ok(ok) => ok,
                     Err(_) => {
                         time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
@@ -232,11 +245,12 @@ impl Builder {
                     }
                 };
 
-                if udp_socket.connect(addr.clone()).await.is_err() {
-                    continue;
-                };
-
-                // TODO: Writer
+                // Writer
+                let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
+                let (mut sink, _) = udp_stream.split();
+                sink
+                    .send_all(&mut ok_receiver)
+                    .await;
             }
         });
         let logger = Logger {
@@ -254,14 +268,12 @@ impl Builder {
     }
 
     /// Initialize logging with a given `Subscriber` and return UDP connection background task.
-    pub fn init_udp_with_subscriber<A, S>(
+    pub fn init_udp_with_subscriber<S>(
         self,
-        addr: A,
+        addr: SocketAddr,
         subscriber: S,
     ) -> Result<BackgroundTask, BuilderError>
     where
-        A: ToSocketAddrs,
-        A: 'static + Clone + Send + Sync,
         S: Subscriber + Send + Sync + 'static,
     {
         let (logger, bg_task) = self.connect_udp(addr)?;
@@ -275,10 +287,7 @@ impl Builder {
     }
 
     /// Initialize logging and return UDP connection background task.
-    pub fn init_udp<A>(self, addr: A) -> Result<BackgroundTask, BuilderError>
-    where
-        A: ToSocketAddrs,
-        A: 'static + Clone + Send + Sync,
+    pub fn init_udp<A>(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError>
     {
         self.init_udp_with_subscriber(addr, Registry::default())
     }

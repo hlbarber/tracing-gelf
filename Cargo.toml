@@ -11,7 +11,7 @@ serde_json = "1.0.44"
 futures-channel = "0.3.1"
 futures-util = { version = "0.3.1", features = ["sink"] }
 tokio = { version = "0.2.5", features = ["tcp", "io-util", "dns", "rt-core", "rt-threaded", "time", "udp"] }
-tokio-util = { version = "0.2.0", features = ["codec"] }
+tokio-util = { version = "0.2.0", features = ["codec", "udp"] }
 tracing-core = "0.1.7"
 tracing-subscriber = "0.2.0-alpha.2"
 
