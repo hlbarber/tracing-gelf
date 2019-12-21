@@ -282,7 +282,7 @@ impl Builder {
     }
 
     /// Initialize logging and return UDP connection background task.
-    pub fn init_udp<A>(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError> {
+    pub fn init_udp(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError> {
         self.init_udp_with_subscriber(addr, Registry::default())
     }
 }
