@@ -1,0 +1,32 @@
+[package]
+name = "tracing-gelf"
+version = "0.1.0-alpha.0"
+authors = ["Harry Barber <harrybarber@protonmail.com>"]
+edition = "2018"
+license = "MIT"
+homepage = "https://github.com/hlb8122/tracing-gelf"
+repository = "https://github.com/hlb8122/tracing-gelf"
+keywords = ["graylog", "logging", "tracing", "tcp", "udp"]
+description = """
+A Graylog `tracing` library.
+"""
+categories = ["development-tools"]
+exclude = ["/.travis.yml"]
+
+[badges]
+travis-ci = { repository = "hlb8122/tracing-gelf" }
+
+[dependencies]
+bytes = "0.5.0"
+hostname = "0.3.0"
+serde_json = "1.0.44"
+futures-channel = "0.3.1"
+futures-util = { version = "0.3.1", features = ["sink"] }
+tokio = { version = "0.2.5", features = ["tcp", "io-util", "dns", "rt-core", "rt-threaded", "time", "udp"] }
+tokio-util = { version = "0.2.0", features = ["codec", "udp"] }
+tracing-core = "0.1.7"
+tracing-subscriber = "0.2.0-alpha.2"
+
+[dev-dependencies]
+tokio = { version = "0.2.5", features = ["macros"] }
+tracing = "0.1.10"
