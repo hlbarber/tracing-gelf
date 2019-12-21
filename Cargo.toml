@@ -3,12 +3,18 @@ name = "tracing-gelf"
 version = "0.1.0-alpha.0"
 authors = ["Harry Barber <harrybarber@protonmail.com>"]
 edition = "2018"
+license = "MIT"
 homepage = "https://github.com/hlb8122/tracing-gelf"
 repository = "https://github.com/hlb8122/tracing-gelf"
+keywords = ["graylog", "logging", "tracing", "tcp", "udp"]
 description = """
 A Graylog `tracing` library.
 """
 categories = ["development-tools"]
+exclude = ["/.travis.yml"]
+
+[badges]
+travis-ci = { repository = "hlb8122/tracing-gelf" }
 
 [dependencies]
 bytes = "0.5.0"
