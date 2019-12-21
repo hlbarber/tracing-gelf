@@ -207,10 +207,7 @@ impl Builder {
     }
 
     /// Return `Logger` layer and a UDP connection background task.
-    pub fn connect_udp(
-        self,
-        addr: SocketAddr,
-    ) -> Result<(Logger, BackgroundTask), BuilderError> {
+    pub fn connect_udp(self, addr: SocketAddr) -> Result<(Logger, BackgroundTask), BuilderError> {
         // Get hostname
         let hostname = hostname::get()
             .map_err(BuilderError::HostnameResolution)?
@@ -224,7 +221,7 @@ impl Builder {
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
-        let mut ok_receiver = receiver.map(move |bytes| Ok((bytes, addr.clone())));
+        let mut ok_receiver = receiver.map(move |bytes| Ok((bytes, addr)));
 
         // Bind address version must match address version
         let bind_addr = if addr.is_ipv4() {
@@ -248,9 +245,7 @@ impl Builder {
                 // Writer
                 let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
                 let (mut sink, _) = udp_stream.split();
-                sink
-                    .send_all(&mut ok_receiver)
-                    .await;
+                sink.send_all(&mut ok_receiver).await;
             }
         });
         let logger = Logger {
@@ -287,8 +282,7 @@ impl Builder {
     }
 
     /// Initialize logging and return UDP connection background task.
-    pub fn init_udp<A>(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError>
-    {
+    pub fn init_udp<A>(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError> {
         self.init_udp_with_subscriber(addr, Registry::default())
     }
 }
