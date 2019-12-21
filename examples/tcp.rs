@@ -13,7 +13,7 @@ async fn main() {
     tokio::spawn(bg_task);
 
     // Send a log to Graylog
-    tracing::info!(message = "oooh what's in here?");
+    tracing::info!(message = "oooh, what's in here?");
 
     // Create a span
     let span = tracing::info_span!("cave");
