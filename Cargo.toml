@@ -3,6 +3,12 @@ name = "tracing-gelf"
 version = "0.1.0-alpha.0"
 authors = ["Harry Barber <harrybarber@protonmail.com>"]
 edition = "2018"
+homepage = "https://github.com/hlb8122/tracing-gelf"
+repository = "https://github.com/hlb8122/tracing-gelf"
+description = """
+A Graylog `tracing` library.
+"""
+categories = ["development-tools"]
 
 [dependencies]
 bytes = "0.5.0"
