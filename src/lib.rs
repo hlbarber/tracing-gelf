@@ -1,3 +1,64 @@
+//! Provides Graylog structured logging using the [`tracing`].
+//!
+//! # Usage
+//!
+//! ```
+//! use std::net::SocketAddr;
+//! use tracing_gelf::Logger;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     // Graylog address
+//!     let address: SocketAddr = "127.0.0.1:12202".parse().unwrap();
+//!
+//!     // Start tracing
+//!     let bg_task = Logger::builder().init_tcp(address).unwrap();
+//!
+//!     // Spawn background task
+//!     // Any futures executor can be used
+//!     tokio::spawn(bg_task);
+//!
+//!     // Send a log to Graylog
+//!     tracing::info!(message = "our dreams feel real while we're in them");
+//!
+//!     // Create a span
+//!     let span = tracing::info_span!("level 1");
+//!     span.in_scope(|| {
+//!         // Log inside a span
+//!         tracing::warn!(message = "we need to go deeper");
+//!
+//!         // Create an nested span
+//!         let inner_span = tracing::info_span!("level 5");
+//!         inner_span.in_scope(|| {
+//!             // Log inside nested span
+//!             tracing::error!(message = "you killed me");
+//!         });
+//!     });
+//!
+//!
+//!     // Log a structured log
+//!     tracing::info!(message = "he's out", spinning_top = true);
+//!
+//!     // Don't exit
+//!     loop {}
+//! }
+//! ```
+//!
+//! # GELF Encoding
+//!
+//! [`tracing`] [`Events`] are encoded into [`GELF format`](https://docs.graylog.org/en/3.1/pages/gelf.html)
+//! as follows:
+//! * [`Event`] fields are inserted as [`GELF`] additional fields, `_field_name`.
+//! * [`Event`] fields whose names collide with [`GELF`] required fields are coerced
+//! into the required types and overrides defaults given in the builder.
+//! * The hierarchy of spans is concatenated and inserted as `span_a::span_b::span_c` and
+//! inserted as an additional field `_span`.
+//!
+//! [`tracing`]: https://docs.rs/tracing
+//! [`Event`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
+//! [`Events`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
+//! [`GELF`]: https://docs.graylog.org/en/3.1/pages/gelf.html
+
 mod visitor;
 
 use std::fmt::Debug;
@@ -42,7 +103,7 @@ impl Logger {
     }
 }
 
-/// The error type for `Logger` building.
+/// The error type for [`Logger`](struct.Logger.html) building.
 #[derive(Debug)]
 pub enum BuilderError {
     /// Could not resolve the hostname.
@@ -53,7 +114,7 @@ pub enum BuilderError {
     Global(SetGlobalDefaultError),
 }
 
-/// A builder for `Logger`.
+/// A builder for [`Logger`](struct.Logger.html).
 #[derive(Debug)]
 pub struct Builder {
     additional_fields: Map<String, Value>,
