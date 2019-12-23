@@ -150,42 +150,48 @@ type BackgroundTask = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl Builder {
     /// Add a persistent additional field to the GELF messages.
-    pub fn additional_field<K: ToString, V: Into<Value>>(&mut self, key: K, value: V) -> &mut Self {
-        self.additional_fields.insert(key.to_string(), value.into());
+    pub fn additional_field<K: ToString, V: Into<Value>>(mut self, key: K, value: V) -> Self {
+        let coerced_value: Value = match value.into() {
+            Value::Number(n) => Value::Number(n),
+            x => Value::String(x.to_string()),
+        };
+        self.additional_fields
+            .insert(format!("_{}", key.to_string()), coerced_value);
         self
     }
 
     /// Set the GELF version number. Defaults to "1.1".
-    pub fn version<V: ToString>(&mut self, version: V) {
+    pub fn version<V: ToString>(mut self, version: V) -> Self {
         self.version = Some(version.to_string());
+        self
     }
 
     /// Set whether line numbers should be logged. Defaults to true.
-    pub fn line_numbers(&mut self, value: bool) -> &mut Self {
+    pub fn line_numbers(mut self, value: bool) -> Self {
         self.line_numbers = value;
         self
     }
 
     /// Set whether file names should be logged. Defaults to true.
-    pub fn file_names(&mut self, value: bool) -> &mut Self {
+    pub fn file_names(mut self, value: bool) -> Self {
         self.file_names = value;
         self
     }
 
     /// Set whether module paths should be logged. Defaults to true.
-    pub fn module_paths(&mut self, value: bool) -> &mut Self {
+    pub fn module_paths(mut self, value: bool) -> Self {
         self.module_paths = value;
         self
     }
 
     /// Set the reconnection timeout in milliseconds. Defaults to 10 seconds.
-    pub fn reconnection_timeout(&mut self, millis: u32) -> &mut Self {
+    pub fn reconnection_timeout(mut self, millis: u32) -> Self {
         self.timeout_ms = Some(millis);
         self
     }
 
     /// Sets the buffer length. Defaults to 512.
-    pub fn buffer(&mut self, length: usize) -> &mut Self {
+    pub fn buffer(mut self, length: usize) -> Self {
         self.buffer = Some(length);
         self
     }
