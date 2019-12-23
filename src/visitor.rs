@@ -65,6 +65,8 @@ impl<'a> Visit for AdditionalFieldVisitor<'a> {
             "version" => self.record_value(field_name, value.to_string()),
             // GELF requires host: String
             "host" => self.record_value(field_name, value.to_string()),
+            // "message" -> "short_message"
+            "message" => self.record_value("short_message", value.to_string()),
             // GELF requires short_message: String
             "short_message" => self.record_value(field_name, value.to_string()),
             // GELF requires full_message: String
@@ -82,6 +84,8 @@ impl<'a> Visit for AdditionalFieldVisitor<'a> {
             "version" => self.record_value(field_name, value.to_string()),
             // GELF requires host: String
             "host" => self.record_value(field_name, value.to_string()),
+            // "message" -> "short_message"
+            "message" => self.record_value("short_message", value.to_string()),
             // GELF requires short_message: String
             "short_message" => self.record_value(field_name, value.to_string()),
             // GELF requires full_message: String
@@ -99,6 +103,8 @@ impl<'a> Visit for AdditionalFieldVisitor<'a> {
             "version" => self.record_value(field_name, value.to_string()),
             // GELF requires host: String
             "host" => self.record_value(field_name, value.to_string()),
+            // "message" -> "short_message"
+            "message" => self.record_value("short_message", value.to_string()),
             // GELF requires short_message: String
             "short_message" => self.record_value(field_name, value.to_string()),
             // GELF requires full_message: String
@@ -122,6 +128,8 @@ impl<'a> Visit for AdditionalFieldVisitor<'a> {
             "hostname" => self.record_value(field_name, value),
             "version" => self.record_value(field_name, value),
             "host" => self.record_value(field_name, value),
+            // "message" -> "short_message"
+            "message" => self.record_value("short_message", value),
             "short_message" => self.record_value(field_name, value),
             "full_message" => self.record_value(field_name, value),
             // GELF requires level: Integer

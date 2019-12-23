@@ -1,5 +1,6 @@
 mod visitor;
 
+use std::fmt::Debug;
 use std::future::Future;
 use std::net::SocketAddr;
 
@@ -7,19 +8,22 @@ use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{map::Map, Value};
-use tokio::net::{TcpStream, ToSocketAddrs, UdpSocket};
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tokio_util::udp::UdpFramed;
 use tracing_core::dispatcher::SetGlobalDefaultError;
-use tracing_core::{span, Event, Subscriber};
+use tracing_core::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
-use tracing_subscriber::Registry;
+use tracing_subscriber::{registry::LookupSpan, Registry};
 
 const DEFAULT_BUFFER: usize = 512;
 const DEFAULT_TIMEOUT: u32 = 10_000;
 const DEFAULT_VERSION: &str = "1.1";
 
+/// `Logger` represents a [`Layer`] responsible for sending structured logs to Graylog.
+///
+/// [`Layer`]: https://docs.rs/tracing-subscriber/0.2.0-alpha.2/tracing_subscriber/layer/trait.Layer.html
 #[derive(Debug)]
 pub struct Logger {
     version: String,
@@ -122,11 +126,7 @@ impl Builder {
     }
 
     /// Return `Logger` and TCP connection background task.
-    pub fn connect_tcp<A>(self, addr: A) -> Result<(Logger, BackgroundTask), BuilderError>
-    where
-        A: ToSocketAddrs,
-        A: 'static + Clone + Send + Sync,
-    {
+    pub fn connect_tcp(self, addr: SocketAddr) -> Result<(Logger, BackgroundTask), BuilderError> {
         // Get hostname
         let hostname = hostname::get()
             .map_err(BuilderError::HostnameResolution)?
@@ -146,7 +146,7 @@ impl Builder {
             // Reconnection loop
             loop {
                 // Try connect
-                let mut tcp_stream = match TcpStream::connect(addr.clone()).await {
+                let mut tcp_stream = match TcpStream::connect(addr).await {
                     Ok(ok) => ok,
                     Err(_) => {
                         time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
@@ -175,15 +175,14 @@ impl Builder {
     }
 
     /// Initialize logging with a given `Subscriber` and return TCP connection background task.
-    pub fn init_tcp_with_subscriber<A, S>(
+    pub fn init_tcp_with_subscriber<S>(
         self,
-        addr: A,
+        addr: SocketAddr,
         subscriber: S,
     ) -> Result<BackgroundTask, BuilderError>
     where
-        A: ToSocketAddrs,
-        A: 'static + Clone + Send + Sync,
-        S: Subscriber + Send + Sync + 'static,
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        S: Send + Sync + 'static,
     {
         let (logger, bg_task) = self.connect_tcp(addr)?;
 
@@ -198,11 +197,7 @@ impl Builder {
     }
 
     /// Initialize logging and return TCP connection background task.
-    pub fn init_tcp<A>(self, addr: A) -> Result<BackgroundTask, BuilderError>
-    where
-        A: ToSocketAddrs,
-        A: 'static + Clone + Send + Sync,
-    {
+    pub fn init_tcp(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError> {
         self.init_tcp_with_subscriber(addr, Registry::default())
     }
 
@@ -269,7 +264,8 @@ impl Builder {
         subscriber: S,
     ) -> Result<BackgroundTask, BuilderError>
     where
-        S: Subscriber + Send + Sync + 'static,
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        S: Send + Sync + 'static,
     {
         let (logger, bg_task) = self.connect_udp(addr)?;
         let subscriber = logger.with_subscriber(subscriber);
@@ -287,12 +283,10 @@ impl Builder {
     }
 }
 
-impl<S: Subscriber> Layer<S> for Logger {
-    // I'm guessing we do nothing here because we don't want to broadcast
-    // a GELF message when we enter spans?
-    #[inline]
-    fn on_record(&self, _: &span::Id, _: &span::Record<'_>, ctx: Context<S>) {}
-
+impl<S> Layer<S> for Logger
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
     fn on_event(&self, event: &Event<'_>, ctx: Context<S>) {
         // GELF object
         let mut object: Map<String, Value> = Map::with_capacity(32);
@@ -303,9 +297,19 @@ impl<S: Subscriber> Layer<S> for Logger {
 
         // Get span name
         if self.spans {
-            if let Some(metadata) = ctx.current_span().metadata() {
-                object.insert("_span".to_string(), metadata.name().into());
-            }
+            let span = ctx
+                .scope()
+                .into_iter()
+                .fold(String::new(), |mut spans, span| {
+                    if spans != String::new() {
+                        spans = format!("{}::{}", spans, span.name());
+                    } else {
+                        spans = span.name().to_string();
+                    }
+                    spans
+                });
+
+            object.insert("_span".to_string(), span.into());
         }
 
         // Extract metadata

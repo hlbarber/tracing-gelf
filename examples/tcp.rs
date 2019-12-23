@@ -1,9 +1,10 @@
+use std::net::SocketAddr;
 use tracing_gelf::Logger;
 
 #[tokio::main]
 async fn main() {
     // Graylog address
-    let address = "127.0.0.1:12201";
+    let address: SocketAddr = "127.0.0.1:12201".parse().unwrap();
 
     // Start tracing
     let bg_task = Logger::builder().init_tcp(address).unwrap();
@@ -19,11 +20,14 @@ async fn main() {
     let span = tracing::info_span!("cave");
     span.in_scope(|| {
         // Log inside a span
-        tracing::info!(message = "oh god, it's dark in here");
+        let test = tracing::info_span!("double");
+        test.in_scope(|| {
+            tracing::warn!(message = "oh god, it's dark in here");
+        })
     });
 
     // Log a structured log
-    tracing::info!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
+    tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
 
     // Don't exit
     loop {}
