@@ -49,6 +49,9 @@
 //! [`tracing`] [`Events`] are encoded into [`GELF format`](https://docs.graylog.org/en/3.1/pages/gelf.html)
 //! as follows:
 //! * [`Event`] fields are inserted as [`GELF`] additional fields, `_field_name`.
+//! * [`Event`] field named `message` is renamed to `short_message`.
+//! * If `short_message` (or `message`) [`Event`] field is missing it `short_message` is
+//! set to the empty string.
 //! * [`Event`] fields whose names collide with [`GELF`] required fields are coerced
 //! into the required types and overrides defaults given in the builder.
 //! * The hierarchy of spans is concatenated and inserted as `span_a::span_b::span_c` and
@@ -105,6 +108,7 @@ impl Logger {
 
 /// The error type for [`Logger`](struct.Logger.html) building.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum BuilderError {
     /// Could not resolve the hostname.
     HostnameResolution(std::io::Error),
@@ -409,6 +413,10 @@ where
         // Append additional fields
         let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
         event.record(&mut add_field_visitor);
+
+        if !object.contains_key("short_message") {
+            object.insert("short_message".to_string(), "".into());
+        }
 
         // Serialize
         let final_object = Value::Object(object);
