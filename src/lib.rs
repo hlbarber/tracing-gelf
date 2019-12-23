@@ -46,7 +46,7 @@
 //!
 //! # GELF Encoding
 //!
-//! [`tracing`] [`Events`] are encoded into [`GELF format`](https://docs.graylog.org/en/3.1/pages/gelf.html)
+//! [`Events`] are encoded into [`GELF format`](https://docs.graylog.org/en/3.1/pages/gelf.html)
 //! as follows:
 //! * [`Event`] fields are inserted as [`GELF`] additional fields, `_field_name`.
 //! * [`Event`] field named `message` is renamed to `short_message`.
