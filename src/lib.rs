@@ -373,7 +373,7 @@ where
                 .into_iter()
                 .fold(String::new(), |mut spans, span| {
                     if spans != String::new() {
-                        spans = format!("{}::{}", spans, span.name());
+                        spans = format!("{}:{}", spans, span.name());
                     } else {
                         spans = span.name().to_string();
                     }
