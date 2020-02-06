@@ -50,11 +50,11 @@
 //! as follows:
 //! * [`Event`] fields are inserted as [`GELF`] additional fields, `_field_name`.
 //! * [`Event`] field named `message` is renamed to `short_message`.
-//! * If `short_message` (or `message`) [`Event`] field is missing it `short_message` is
+//! * If `short_message` (or `message`) [`Event`] field is missing then `short_message` is
 //! set to the empty string.
 //! * [`Event`] fields whose names collide with [`GELF`] required fields are coerced
 //! into the required types and overrides defaults given in the builder.
-//! * The hierarchy of spans is concatenated and inserted as `span_a::span_b::span_c` and
+//! * The hierarchy of spans is concatenated and inserted as `span_a:span_b:span_c` and
 //! inserted as an additional field `_span`.
 //!
 //! [`tracing`]: https://docs.rs/tracing
