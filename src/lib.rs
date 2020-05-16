@@ -90,9 +90,7 @@ const DEFAULT_VERSION: &str = "1.1";
 /// [`Layer`]: https://docs.rs/tracing-subscriber/0.2.0-alpha.2/tracing_subscriber/layer/trait.Layer.html
 #[derive(Debug)]
 pub struct Logger {
-    version: String,
-    hostname: String,
-    additional_fields: Map<String, Value>,
+    base_object: Map<String, Value>,
     line_numbers: bool,
     file_names: bool,
     module_paths: bool,
@@ -198,16 +196,23 @@ impl Builder {
 
     /// Return `Logger` and TCP connection background task.
     pub fn connect_tcp(self, addr: SocketAddr) -> Result<(Logger, BackgroundTask), BuilderError> {
+        // Persistent fields
+        let mut base_object = self.additional_fields;
+
         // Get hostname
         let hostname = hostname::get()
             .map_err(BuilderError::HostnameResolution)?
             .into_string()
             .map_err(BuilderError::OsString)?;
+        base_object.insert("host".to_string(), hostname.into());
+
+        // Add version
+        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
+        base_object.insert("version".to_string(), version.into());
 
         // Get timeout
         let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
         let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
-        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
@@ -231,10 +236,9 @@ impl Builder {
                 sink.send_all(&mut ok_receiver).await;
             }
         });
+
         let logger = Logger {
-            additional_fields: self.additional_fields,
-            hostname,
-            version,
+            base_object,
             file_names: self.file_names,
             line_numbers: self.line_numbers,
             module_paths: self.module_paths,
@@ -274,16 +278,23 @@ impl Builder {
 
     /// Return `Logger` layer and a UDP connection background task.
     pub fn connect_udp(self, addr: SocketAddr) -> Result<(Logger, BackgroundTask), BuilderError> {
+        // Persistent fields
+        let mut base_object = self.additional_fields;
+
         // Get hostname
         let hostname = hostname::get()
             .map_err(BuilderError::HostnameResolution)?
             .into_string()
             .map_err(BuilderError::OsString)?;
+        base_object.insert("host".to_string(), hostname.into());
+
+        // Add version
+        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
+        base_object.insert("version".to_string(), version.into());
 
         // Get timeout
         let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
         let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
-        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
@@ -315,9 +326,7 @@ impl Builder {
             }
         });
         let logger = Logger {
-            additional_fields: self.additional_fields,
-            hostname,
-            version,
+            base_object,
             file_names: self.file_names,
             line_numbers: self.line_numbers,
             module_paths: self.module_paths,
@@ -360,11 +369,7 @@ where
 {
     fn on_event(&self, event: &Event<'_>, ctx: Context<S>) {
         // GELF object
-        let mut object: Map<String, Value> = Map::with_capacity(32);
-
-        // Add persistent fields
-        object.insert("version".to_string(), self.version.clone().into());
-        object.insert("host".to_string(), self.hostname.clone().into());
+        let mut object: Map<String, Value> = self.base_object.clone();
 
         // Get span name
         if self.spans {
