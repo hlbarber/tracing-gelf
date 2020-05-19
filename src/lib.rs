@@ -151,6 +151,7 @@ impl Builder {
     pub fn additional_field<K: ToString, V: Into<Value>>(mut self, key: K, value: V) -> Self {
         let coerced_value: Value = match value.into() {
             Value::Number(n) => Value::Number(n),
+            Value::String(x) => Value::String(x),
             x => Value::String(x.to_string()),
         };
         self.additional_fields
