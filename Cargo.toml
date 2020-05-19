@@ -1,6 +1,6 @@
 [package]
 name = "tracing-gelf"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Harry Barber <harrybarber@protonmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -22,11 +22,11 @@ hostname = "0.3.1"
 serde_json = "1.0.53"
 futures-channel = "0.3.5"
 futures-util = { version = "0.3.5", features = ["sink"] }
-tokio = { version = "0.2.20", features = ["tcp", "io-util", "dns", "rt-core", "rt-threaded", "time", "udp"] }
+tokio = { version = "0.2.21", features = ["tcp", "io-util", "dns", "rt-core", "rt-threaded", "time", "udp"] }
 tokio-util = { version = "0.3.1", features = ["codec", "udp"] }
 tracing-core = "0.1.10"
 tracing-subscriber = "0.2.5"
 
 [dev-dependencies]
-tokio = { version = "0.2.20", features = ["macros"] }
-tracing = "0.1.13"
+tokio = { version = "0.2.21", features = ["macros"] }
+tracing = "0.1.14"
