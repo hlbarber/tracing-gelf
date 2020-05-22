@@ -77,7 +77,10 @@ use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tokio_util::udp::UdpFramed;
 use tracing_core::dispatcher::SetGlobalDefaultError;
-use tracing_core::{Event, Subscriber};
+use tracing_core::{
+    span::{Attributes, Id, Record},
+    Event, Subscriber,
+};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::{registry::LookupSpan, Registry};
 
@@ -368,6 +371,33 @@ impl<S> Layer<S> for Logger
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
+    fn new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<S>) {
+        let span = ctx.span(id).expect("Span not found, this is a bug");
+
+        let mut extensions = span.extensions_mut();
+
+        if extensions.get_mut::<Map<String, Value>>().is_none() {
+            let mut object: Map<String, Value> = self.base_object.clone();
+            let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
+            attrs.record(&mut add_field_visitor);
+            extensions.insert(object)
+        }
+    }
+
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<S>) {
+        let span = ctx.span(id).expect("Span not found, this is a bug");
+        let mut extensions = span.extensions_mut();
+        if let Some(mut object) = extensions.get_mut::<Map<String, Value>>() {
+            let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
+            values.record(&mut add_field_visitor);
+        } else {
+            let mut object: Map<String, Value> = self.base_object.clone();
+            let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
+            values.record(&mut add_field_visitor);
+            extensions.insert(object)
+        }
+    }
+
     fn on_event(&self, event: &Event<'_>, ctx: Context<S>) {
         // GELF object
         let mut object: Map<String, Value> = self.base_object.clone();
@@ -378,11 +408,16 @@ where
                 .scope()
                 .into_iter()
                 .fold(String::new(), |mut spans, span| {
+                    // Add span fields to the base object
+                    if let Some(span_object) = span.extensions().get::<Map<String, Value>>() {
+                        object.extend(span_object.clone());
+                    }
                     if spans != String::new() {
                         spans = format!("{}:{}", spans, span.name());
                     } else {
                         spans = span.name().to_string();
                     }
+
                     spans
                 });
 
