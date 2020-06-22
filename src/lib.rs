@@ -384,6 +384,20 @@ where
         }
     }
 
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<S>) {
+        let span = ctx.span(id).expect("Span not found, this is a bug");
+        let mut extensions = span.extensions_mut();
+        if let Some(mut object) = extensions.get_mut::<Map<String, Value>>() {
+            let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
+            values.record(&mut add_field_visitor);
+        } else {
+            let mut object = Map::with_capacity(16);
+            let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
+            values.record(&mut add_field_visitor);
+            extensions.insert(object)
+        }
+    }
+
     fn on_event(&self, event: &Event<'_>, ctx: Context<S>) {
         // GELF object
         let mut object: Map<String, Value> = self.base_object.clone();
