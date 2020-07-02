@@ -12,7 +12,7 @@
 //! ```
 //! use std::net::SocketAddr;
 //! use tracing_gelf::Logger;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() {
 //!     // Graylog address
