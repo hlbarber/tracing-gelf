@@ -8,7 +8,7 @@ homepage = "https://github.com/hlb8122/tracing-gelf"
 repository = "https://github.com/hlb8122/tracing-gelf"
 keywords = ["graylog", "logging", "tracing", "tcp", "udp"]
 description = """
-A Graylog `tracing` library.
+A Graylog tracing library.
 """
 categories = ["development-tools"]
 exclude = ["/.travis.yml"]
