@@ -9,7 +9,7 @@
 //!
 //! # Usage
 //!
-//! ```
+//! ```rust
 //! use std::net::SocketAddr;
 //! use tracing_gelf::Logger;
 //!
@@ -41,8 +41,6 @@
 //!     // Log a structured log
 //!     tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
 //!
-//!     // Don't exit
-//!     loop {}
 //! }
 //! ```
 //!
