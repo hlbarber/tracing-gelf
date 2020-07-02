@@ -1,14 +1,19 @@
+//! This module contains lower-level primitives for visiting fields.
+
 use std::fmt;
 
 use serde_json::map::Map;
 use serde_json::Value;
 use tracing_core::field::{Field, Visit};
 
+/// The visitor necessary to record values in GELF format.
+#[derive(Debug)]
 pub struct AdditionalFieldVisitor<'a> {
     object: &'a mut Map<String, Value>,
 }
 
 impl<'a> AdditionalFieldVisitor<'a> {
+    /// Create a new [`AdditionalFieldVisitor`] from a [`Map`].
     pub fn new(object: &'a mut Map<String, Value>) -> Self {
         AdditionalFieldVisitor { object }
     }

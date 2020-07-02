@@ -20,7 +20,7 @@ async fn main() {
     let span = tracing::info_span!("cave");
     span.in_scope(|| {
         // Log inside a span
-        let test = tracing::info_span!("double");
+        let test = tracing::info_span!("deeper in cave", smell = "damp");
         test.in_scope(|| {
             tracing::warn!(message = "oh god, it's dark in here");
         })

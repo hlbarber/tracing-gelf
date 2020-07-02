@@ -20,7 +20,7 @@ async fn main() {
     let span = tracing::info_span!("level 1");
     span.in_scope(|| {
         // Log inside a span
-        tracing::warn!(message = "we need to go deeper");
+        tracing::warn!(message = "we need to go deeper", music = "hans zimmer");
 
         // Create an nested span
         let inner_span = tracing::info_span!("level 5");

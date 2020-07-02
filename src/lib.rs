@@ -1,3 +1,10 @@
+#![warn(
+    missing_debug_implementations,
+    missing_docs,
+    rust_2018_idioms,
+    unreachable_pub
+)]
+
 //! Provides Graylog structured logging using the [`tracing`].
 //!
 //! # Usage
@@ -5,11 +12,11 @@
 //! ```
 //! use std::net::SocketAddr;
 //! use tracing_gelf::Logger;
-//!
+//! 
 //! #[tokio::main]
 //! async fn main() {
 //!     // Graylog address
-//!     let address: SocketAddr = "127.0.0.1:12202".parse().unwrap();
+//!     let address: SocketAddr = "127.0.0.1:12201".parse().unwrap();
 //!
 //!     // Start tracing
 //!     let bg_task = Logger::builder().init_tcp(address).unwrap();
@@ -19,25 +26,20 @@
 //!     tokio::spawn(bg_task);
 //!
 //!     // Send a log to Graylog
-//!     tracing::info!(message = "our dreams feel real while we're in them");
+//!     tracing::info!(message = "oooh, what's in here?");
 //!
 //!     // Create a span
-//!     let span = tracing::info_span!("level 1");
+//!     let span = tracing::info_span!("cave");
 //!     span.in_scope(|| {
 //!         // Log inside a span
-//!         tracing::warn!(message = "we need to go deeper");
-//!
-//!         // Create an nested span
-//!         let inner_span = tracing::info_span!("level 5");
-//!         inner_span.in_scope(|| {
-//!             // Log inside nested span
-//!             tracing::error!(message = "you killed me");
-//!         });
+//!         let test = tracing::info_span!("deeper in cave", smell = "damp");
+//!         test.in_scope(|| {
+//!             tracing::warn!(message = "oh god, it's dark in here");
+//!         })
 //!     });
 //!
-//!
 //!     // Log a structured log
-//!     tracing::info!(message = "he's out", spinning_top = true);
+//!     tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
 //!
 //!     // Don't exit
 //!     loop {}
@@ -62,7 +64,7 @@
 //! [`Events`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
 //! [`GELF`]: https://docs.graylog.org/en/3.1/pages/gelf.html
 
-mod visitor;
+pub mod visitor;
 
 use std::fmt::Debug;
 use std::future::Future;
@@ -102,6 +104,7 @@ pub struct Logger {
 }
 
 impl Logger {
+    /// Create a default [`Logger`] configuration, which can then be customized.
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -237,7 +240,9 @@ impl Builder {
                 // Writer
                 let (_, writer) = tcp_stream.split();
                 let mut sink = FramedWrite::new(writer, BytesCodec::new());
-                sink.send_all(&mut ok_receiver).await;
+                if let Err(_err) = sink.send_all(&mut ok_receiver).await {
+                    // TODO: Add handler
+                };
             }
         });
 
@@ -326,7 +331,9 @@ impl Builder {
                 // Writer
                 let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
                 let (mut sink, _) = udp_stream.split();
-                sink.send_all(&mut ok_receiver).await;
+                if let Err(_err) = sink.send_all(&mut ok_receiver).await {
+                    // TODO: Add handler
+                };
             }
         });
         let logger = Logger {
@@ -371,7 +378,7 @@ impl<S> Layer<S> for Logger
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<S>) {
+    fn new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("Span not found, this is a bug");
 
         let mut extensions = span.extensions_mut();
@@ -384,7 +391,7 @@ where
         }
     }
 
-    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<S>) {
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("Span not found, this is a bug");
         let mut extensions = span.extensions_mut();
         if let Some(mut object) = extensions.get_mut::<Map<String, Value>>() {
@@ -398,7 +405,7 @@ where
         }
     }
 
-    fn on_event(&self, event: &Event<'_>, ctx: Context<S>) {
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         // GELF object
         let mut object: Map<String, Value> = self.base_object.clone();
 
@@ -471,6 +478,8 @@ where
         raw.push(0);
 
         // Send
-        self.sender.clone().try_send(Bytes::from(raw));
+        if let Err(_err) = self.sender.clone().try_send(Bytes::from(raw)) {
+            // TODO: Add handler
+        };
     }
 }
