@@ -212,7 +212,7 @@ impl Builder {
         base_object.insert("host".to_string(), hostname.into());
 
         // Add version
-        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
+        let version = self.version.unwrap_or_else(|| DEFAULT_VERSION.to_string());
         base_object.insert("version".to_string(), version.into());
 
         // Get timeout
@@ -296,7 +296,7 @@ impl Builder {
         base_object.insert("host".to_string(), hostname.into());
 
         // Add version
-        let version = self.version.unwrap_or(DEFAULT_VERSION.to_string());
+        let version = self.version.unwrap_or_else(|| DEFAULT_VERSION.to_string());
         base_object.insert("version".to_string(), version.into());
 
         // Get timeout
@@ -409,22 +409,19 @@ where
 
         // Get span name
         if self.spans {
-            let span = ctx
-                .scope()
-                .into_iter()
-                .fold(String::new(), |mut spans, span| {
-                    // Add span fields to the base object
-                    if let Some(span_object) = span.extensions().get::<Map<String, Value>>() {
-                        object.extend(span_object.clone());
-                    }
-                    if spans != String::new() {
-                        spans = format!("{}:{}", spans, span.name());
-                    } else {
-                        spans = span.name().to_string();
-                    }
+            let span = ctx.scope().fold(String::new(), |mut spans, span| {
+                // Add span fields to the base object
+                if let Some(span_object) = span.extensions().get::<Map<String, Value>>() {
+                    object.extend(span_object.clone());
+                }
+                if spans != String::new() {
+                    spans = format!("{}:{}", spans, span.name());
+                } else {
+                    spans = span.name().to_string();
+                }
 
-                    spans
-                });
+                spans
+            });
 
             object.insert("_span".to_string(), span.into());
         }
