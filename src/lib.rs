@@ -433,8 +433,8 @@ where
             tracing_core::Level::ERROR => 3,
             tracing_core::Level::WARN => 4,
             tracing_core::Level::INFO => 5,
-            tracing_core::Level::TRACE => 6,
-            tracing_core::Level::DEBUG => 7,
+            tracing_core::Level::DEBUG => 6,
+            tracing_core::Level::TRACE => 7,
         };
         object.insert("level".to_string(), level_num.into());
 
