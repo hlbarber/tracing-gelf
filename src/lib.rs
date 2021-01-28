@@ -64,15 +64,15 @@
 
 pub mod visitor;
 
-use std::fmt::Debug;
 use std::future::Future;
 use std::net::SocketAddr;
 
 use bytes::Bytes;
 use futures_channel::mpsc;
+use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{map::Map, Value};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::{TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tokio_util::udp::UdpFramed;
@@ -200,7 +200,11 @@ impl Builder {
     }
 
     /// Return `Logger` and TCP connection background task.
-    pub fn connect_tcp(self, addr: SocketAddr) -> Result<(Logger, BackgroundTask), BuilderError> {
+    pub fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
         // Persistent fields
         let mut base_object = self.additional_fields;
 
@@ -226,21 +230,12 @@ impl Builder {
         let bg_task = Box::pin(async move {
             // Reconnection loop
             loop {
-                // Try connect
-                let mut tcp_stream = match TcpStream::connect(addr).await {
-                    Ok(ok) => ok,
-                    Err(_) => {
-                        time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
-                        continue;
-                    }
-                };
-
-                // Writer
-                let (_, writer) = tcp_stream.split();
-                let mut sink = FramedWrite::new(writer, BytesCodec::new());
-                if let Err(_err) = sink.send_all(&mut ok_receiver).await {
-                    // TODO: Add handler
-                };
+                // Do a DNS lookup if `addr` is a hostname
+                let addrs = addr.to_socket_addrs().await.into_iter().flatten();
+                // Loop through the IP addresses that the hostname resolved to
+                for addr in addrs {
+                    handle_tcp_connection(addr, &mut ok_receiver, timeout_ms as u64).await;
+                }
             }
         });
 
@@ -257,14 +252,16 @@ impl Builder {
     }
 
     /// Initialize logging with a given `Subscriber` and return TCP connection background task.
-    pub fn init_tcp_with_subscriber<S>(
+    pub fn init_tcp_with_subscriber<S, T>(
         self,
-        addr: SocketAddr,
+        addr: T,
         subscriber: S,
     ) -> Result<BackgroundTask, BuilderError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         S: Send + Sync + 'static,
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
     {
         let (logger, bg_task) = self.connect_tcp(addr)?;
 
@@ -279,12 +276,20 @@ impl Builder {
     }
 
     /// Initialize logging and return TCP connection background task.
-    pub fn init_tcp(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError> {
+    pub fn init_tcp<T>(self, addr: T) -> Result<BackgroundTask, BuilderError>
+    where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
         self.init_tcp_with_subscriber(addr, Registry::default())
     }
 
     /// Return `Logger` layer and a UDP connection background task.
-    pub fn connect_udp(self, addr: SocketAddr) -> Result<(Logger, BackgroundTask), BuilderError> {
+    pub fn connect_udp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
         // Persistent fields
         let mut base_object = self.additional_fields;
 
@@ -304,34 +309,17 @@ impl Builder {
         let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
 
         // Construct background task
-        let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
-        let mut ok_receiver = receiver.map(move |bytes| Ok((bytes, addr)));
-
-        // Bind address version must match address version
-        let bind_addr = if addr.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        };
+        let (sender, mut receiver) = mpsc::channel::<Bytes>(buffer);
 
         let bg_task = Box::pin(async move {
             // Reconnection loop
             loop {
-                // Try connect
-                let udp_socket = match UdpSocket::bind(bind_addr).await {
-                    Ok(ok) => ok,
-                    Err(_) => {
-                        time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
-                        continue;
-                    }
-                };
-
-                // Writer
-                let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
-                let (mut sink, _) = udp_stream.split();
-                if let Err(_err) = sink.send_all(&mut ok_receiver).await {
-                    // TODO: Add handler
-                };
+                // Do a DNS lookup if `addr` is a hostname
+                let addrs = addr.to_socket_addrs().await.into_iter().flatten();
+                // Loop through the IP addresses that the hostname resolved to
+                for addr in addrs {
+                    handle_udp_connection(addr, &mut receiver, timeout_ms as u64).await;
+                }
             }
         });
         let logger = Logger {
@@ -347,14 +335,16 @@ impl Builder {
     }
 
     /// Initialize logging with a given `Subscriber` and return UDP connection background task.
-    pub fn init_udp_with_subscriber<S>(
+    pub fn init_udp_with_subscriber<S, T>(
         self,
-        addr: SocketAddr,
+        addr: T,
         subscriber: S,
     ) -> Result<BackgroundTask, BuilderError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         S: Send + Sync + 'static,
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
     {
         let (logger, bg_task) = self.connect_udp(addr)?;
         let subscriber = logger.with_subscriber(subscriber);
@@ -367,7 +357,11 @@ impl Builder {
     }
 
     /// Initialize logging and return UDP connection background task.
-    pub fn init_udp(self, addr: SocketAddr) -> Result<BackgroundTask, BuilderError> {
+    pub fn init_udp<T>(self, addr: T) -> Result<BackgroundTask, BuilderError>
+    where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
         self.init_udp_with_subscriber(addr, Registry::default())
     }
 }
@@ -475,6 +469,59 @@ where
         // Send
         if let Err(_err) = self.sender.clone().try_send(Bytes::from(raw)) {
             // TODO: Add handler
+        };
+    }
+}
+
+async fn handle_tcp_connection<S>(addr: SocketAddr, receiver: &mut S, timeout_ms: u64)
+where
+    S: Stream<Item = Result<Bytes, std::io::Error>>,
+    S: Unpin,
+{
+    // Try connect
+    let mut tcp_stream = match TcpStream::connect(addr).await {
+        Ok(ok) => ok,
+        Err(_) => {
+            time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
+            return;
+        }
+    };
+
+    // Writer
+    let (_, writer) = tcp_stream.split();
+    let mut sink = FramedWrite::new(writer, BytesCodec::new());
+    if let Err(_err) = sink.send_all(receiver).await {
+        // TODO: Add handler
+    };
+}
+
+async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S, timeout_ms: u64)
+where
+    S: Stream<Item = Bytes>,
+    S: Unpin,
+{
+    // Bind address version must match address version
+    let bind_addr = if addr.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    };
+    // Try connect
+    let udp_socket = match UdpSocket::bind(bind_addr).await {
+        Ok(ok) => ok,
+        Err(_) => {
+            time::delay_for(time::Duration::from_millis(timeout_ms)).await;
+            return;
+        }
+    };
+
+    // Writer
+    let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
+    let (mut sink, _) = udp_stream.split();
+    while let Some(bytes) = receiver.next().await {
+        if let Err(_err) = sink.send((bytes, addr)).await {
+            // TODO: Add handler
+            break;
         };
     }
 }
