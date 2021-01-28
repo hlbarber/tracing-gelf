@@ -20,13 +20,12 @@ tracing-gelf = "0.4"
 ### TCP Logging
 
 ```rust
-use std::net::SocketAddr;
 use tracing_gelf::Logger;
 
 #[tokio::main]
 async fn main() {
     // Graylog address
-    let address: SocketAddr = "127.0.0.1:12201".parse().unwrap();
+    let address = "127.0.0.1:12201";
 
     // Start tracing
     let bg_task = Logger::builder().init_tcp(address).unwrap();
@@ -50,19 +49,22 @@ async fn main() {
 
     // Log a structured log
     tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
+
+    // Don't exit
+    loop {}
 }
+
 ```
 
 ### UDP Logging
 
 ```rust
-use std::net::SocketAddr;
 use tracing_gelf::Logger;
 
 #[tokio::main]
 async fn main() {
     // Graylog address
-    let address: SocketAddr = "127.0.0.1:12202".parse().unwrap();
+    let address = "127.0.0.1:12202";
 
     // Start tracing
     let bg_task = Logger::builder().init_udp(address).unwrap();
@@ -90,6 +92,9 @@ async fn main() {
 
     // Log a structured log
     tracing::info!(message = "he's out", spinning_top = true);
+
+    // Don't exit
+    loop {}
 }
 
 ```

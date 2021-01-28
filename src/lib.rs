@@ -72,7 +72,7 @@ use futures_channel::mpsc;
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{map::Map, Value};
-use tokio::net::{TcpStream, ToSocketAddrs, UdpSocket};
+use tokio::net::{lookup_host, TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
 use tokio_util::udp::UdpFramed;
@@ -231,7 +231,7 @@ impl Builder {
             // Reconnection loop
             loop {
                 // Do a DNS lookup if `addr` is a hostname
-                let addrs = addr.to_socket_addrs().await.into_iter().flatten();
+                let addrs = lookup_host(&addr).await.into_iter().flatten();
                 // Loop through the IP addresses that the hostname resolved to
                 for addr in addrs {
                     handle_tcp_connection(addr, &mut ok_receiver, timeout_ms as u64).await;
@@ -315,7 +315,7 @@ impl Builder {
             // Reconnection loop
             loop {
                 // Do a DNS lookup if `addr` is a hostname
-                let addrs = addr.to_socket_addrs().await.into_iter().flatten();
+                let addrs = lookup_host(&addr).await.into_iter().flatten();
                 // Loop through the IP addresses that the hostname resolved to
                 for addr in addrs {
                     handle_udp_connection(addr, &mut receiver, timeout_ms as u64).await;
@@ -482,7 +482,7 @@ where
     let mut tcp_stream = match TcpStream::connect(addr).await {
         Ok(ok) => ok,
         Err(_) => {
-            time::delay_for(time::Duration::from_millis(timeout_ms as u64)).await;
+            time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             return;
         }
     };
@@ -510,7 +510,7 @@ where
     let udp_socket = match UdpSocket::bind(bind_addr).await {
         Ok(ok) => ok,
         Err(_) => {
-            time::delay_for(time::Duration::from_millis(timeout_ms)).await;
+            time::sleep(time::Duration::from_millis(timeout_ms)).await;
             return;
         }
     };

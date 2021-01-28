@@ -1,10 +1,9 @@
-use std::net::SocketAddr;
 use tracing_gelf::Logger;
 
 #[tokio::main]
 async fn main() {
     // Graylog address
-    let address: SocketAddr = "127.0.0.1:12201".parse().unwrap();
+    let address = "127.0.0.1:12201";
 
     // Start tracing
     let bg_task = Logger::builder().init_tcp(address).unwrap();
