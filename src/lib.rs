@@ -232,10 +232,14 @@ impl Builder {
             loop {
                 // Do a DNS lookup if `addr` is a hostname
                 let addrs = lookup_host(&addr).await.into_iter().flatten();
+
                 // Loop through the IP addresses that the hostname resolved to
                 for addr in addrs {
-                    handle_tcp_connection(addr, &mut ok_receiver, timeout_ms as u64).await;
+                    handle_tcp_connection(addr, &mut ok_receiver).await;
                 }
+
+                // Sleep before re-attempting
+                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             }
         });
 
@@ -316,10 +320,14 @@ impl Builder {
             loop {
                 // Do a DNS lookup if `addr` is a hostname
                 let addrs = lookup_host(&addr).await.into_iter().flatten();
+
                 // Loop through the IP addresses that the hostname resolved to
                 for addr in addrs {
-                    handle_udp_connection(addr, &mut receiver, timeout_ms as u64).await;
+                    handle_udp_connection(addr, &mut receiver).await;
                 }
+
+                // Sleep before re-attempting
+                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             }
         });
         let logger = Logger {
@@ -473,7 +481,7 @@ where
     }
 }
 
-async fn handle_tcp_connection<S>(addr: SocketAddr, receiver: &mut S, timeout_ms: u64)
+async fn handle_tcp_connection<S>(addr: SocketAddr, receiver: &mut S)
 where
     S: Stream<Item = Result<Bytes, std::io::Error>>,
     S: Unpin,
@@ -482,7 +490,6 @@ where
     let mut tcp_stream = match TcpStream::connect(addr).await {
         Ok(ok) => ok,
         Err(_) => {
-            time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             return;
         }
     };
@@ -495,7 +502,7 @@ where
     };
 }
 
-async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S, timeout_ms: u64)
+async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S)
 where
     S: Stream<Item = Bytes>,
     S: Unpin,
@@ -510,7 +517,6 @@ where
     let udp_socket = match UdpSocket::bind(bind_addr).await {
         Ok(ok) => ok,
         Err(_) => {
-            time::sleep(time::Duration::from_millis(timeout_ms)).await;
             return;
         }
     };
