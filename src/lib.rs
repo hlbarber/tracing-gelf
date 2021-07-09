@@ -62,6 +62,7 @@
 //! [`Events`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
 //! [`GELF`]: https://docs.graylog.org/en/3.1/pages/gelf.html
 
+pub mod no_subscriber;
 pub mod visitor;
 
 use std::future::Future;
