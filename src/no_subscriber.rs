@@ -1,6 +1,6 @@
 use tracing_core::{span, subscriber, Event, Metadata, Subscriber};
 
-pub (crate) struct NoSubscriber;
+pub(crate) struct NoSubscriber;
 
 impl Subscriber for NoSubscriber {
     #[inline]
