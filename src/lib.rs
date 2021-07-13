@@ -62,6 +62,7 @@
 //! [`Events`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
 //! [`GELF`]: https://docs.graylog.org/en/3.1/pages/gelf.html
 
+mod no_subscriber;
 pub mod visitor;
 
 use std::future::Future;
@@ -71,6 +72,7 @@ use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::stream::Stream;
 use futures_util::{SinkExt, StreamExt};
+use no_subscriber::NoSubscriber;
 use serde_json::{map::Map, Value};
 use tokio::net::{lookup_host, TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
@@ -81,6 +83,7 @@ use tracing_core::{
     span::{Attributes, Id, Record},
     Event, Subscriber,
 };
+use tracing_futures::WithSubscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::{registry::LookupSpan, Registry};
 
@@ -227,21 +230,24 @@ impl Builder {
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
         let mut ok_receiver = receiver.map(Ok);
 
-        let bg_task = Box::pin(async move {
-            // Reconnection loop
-            loop {
-                // Do a DNS lookup if `addr` is a hostname
-                let addrs = lookup_host(&addr).await.into_iter().flatten();
+        let bg_task = Box::pin(
+            async move {
+                // Reconnection loop
+                loop {
+                    // Do a DNS lookup if `addr` is a hostname
+                    let addrs = lookup_host(&addr).await.into_iter().flatten();
 
-                // Loop through the IP addresses that the hostname resolved to
-                for addr in addrs {
-                    handle_tcp_connection(addr, &mut ok_receiver).await;
+                    // Loop through the IP addresses that the hostname resolved to
+                    for addr in addrs {
+                        handle_tcp_connection(addr, &mut ok_receiver).await;
+                    }
+
+                    // Sleep before re-attempting
+                    time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
                 }
-
-                // Sleep before re-attempting
-                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             }
-        });
+            .with_subscriber(NoSubscriber),
+        );
 
         let logger = Logger {
             base_object,
@@ -270,7 +276,7 @@ impl Builder {
         let (logger, bg_task) = self.connect_tcp(addr)?;
 
         // If a subscriber was set then use it as the inner subscriber.
-        let subscriber = logger.with_subscriber(subscriber);
+        let subscriber = Layer::with_subscriber(logger, subscriber);
         tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
             subscriber,
         ))
@@ -315,21 +321,24 @@ impl Builder {
         // Construct background task
         let (sender, mut receiver) = mpsc::channel::<Bytes>(buffer);
 
-        let bg_task = Box::pin(async move {
-            // Reconnection loop
-            loop {
-                // Do a DNS lookup if `addr` is a hostname
-                let addrs = lookup_host(&addr).await.into_iter().flatten();
+        let bg_task = Box::pin(
+            async move {
+                // Reconnection loop
+                loop {
+                    // Do a DNS lookup if `addr` is a hostname
+                    let addrs = lookup_host(&addr).await.into_iter().flatten();
 
-                // Loop through the IP addresses that the hostname resolved to
-                for addr in addrs {
-                    handle_udp_connection(addr, &mut receiver).await;
+                    // Loop through the IP addresses that the hostname resolved to
+                    for addr in addrs {
+                        handle_udp_connection(addr, &mut receiver).await;
+                    }
+
+                    // Sleep before re-attempting
+                    time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
                 }
-
-                // Sleep before re-attempting
-                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             }
-        });
+            .with_subscriber(NoSubscriber),
+        );
         let logger = Logger {
             base_object,
             file_names: self.file_names,
@@ -355,7 +364,7 @@ impl Builder {
         T: Send + Sync + 'static,
     {
         let (logger, bg_task) = self.connect_udp(addr)?;
-        let subscriber = logger.with_subscriber(subscriber);
+        let subscriber = Layer::with_subscriber(logger, subscriber);
         tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
             subscriber,
         ))
