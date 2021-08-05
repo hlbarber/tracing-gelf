@@ -77,6 +77,7 @@ use serde_json::{map::Map, Value};
 use tokio::net::{lookup_host, TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
+use tokio_util::compat::{FuturesAsyncWriteCompatExt, TokioAsyncWriteCompatExt};
 use tokio_util::udp::UdpFramed;
 use tracing_core::dispatcher::SetGlobalDefaultError;
 use tracing_core::{
@@ -121,6 +122,10 @@ pub enum BuilderError {
     OsString(std::ffi::OsString),
     /// Global dispatcher failed.
     Global(SetGlobalDefaultError),
+
+    /// DNS name error
+    #[cfg(feature = "tokio-rustls")]
+    Dns(tokio_rustls::webpki::InvalidDNSNameError),
 }
 
 /// A builder for [`Logger`](struct.Logger.html).
@@ -202,9 +207,45 @@ impl Builder {
         self
     }
 
-    /// Return `Logger` and TCP connection background task.
-    pub fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    /// Return `Logger` and TLS connection background task.
+    #[cfg(feature = "tokio-rustls")]
+    pub fn connect_tls<T>(
+        self,
+        addr: T,
+        domain_name: String,
+        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+    ) -> Result<(Logger, BackgroundTask), BuilderError>
     where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
+        let dnsname = tokio_rustls::webpki::DNSNameRef::try_from_ascii_str(&domain_name)
+            .map_err(BuilderError::Dns)?
+            .to_owned();
+
+        self.connect_tcp_with_wrapper(addr, {
+            move |s| {
+                let dnsname = dnsname.clone();
+                let client_config = client_config.clone();
+
+                async move {
+                    let config = tokio_rustls::TlsConnector::from(client_config);
+                    config.connect(dnsname.as_ref(), s).await
+                }
+            }
+        })
+    }
+
+    /// Return `Logger` and TCP connection background task.
+    fn connect_tcp_with_wrapper<T, F, R, I>(
+        self,
+        addr: T,
+        f: F,
+    ) -> Result<(Logger, BackgroundTask), BuilderError>
+    where
+        F: FnMut(TcpStream) -> R + Send + Sync + Clone + 'static,
+        R: Future<Output = Result<I, std::io::Error>> + Send,
+        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
         T: ToSocketAddrs,
         T: Send + Sync + 'static,
     {
@@ -239,7 +280,7 @@ impl Builder {
 
                     // Loop through the IP addresses that the hostname resolved to
                     for addr in addrs {
-                        handle_tcp_connection(addr, &mut ok_receiver).await;
+                        handle_tcp_connection(addr, f.clone(), &mut ok_receiver).await;
                     }
 
                     // Sleep before re-attempting
@@ -259,6 +300,15 @@ impl Builder {
         };
 
         Ok((logger, bg_task))
+    }
+
+    /// Return `Logger` and TCP connection background task.
+    fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
+        self.connect_tcp_with_wrapper(addr, |s| async { Ok(s) })
     }
 
     /// Initialize logging with a given `Subscriber` and return TCP connection background task.
@@ -285,6 +335,31 @@ impl Builder {
         Ok(bg_task)
     }
 
+    /// Initialize logging with a given `Subscriber` and return TCP connection background task.
+    #[cfg(feature = "tokio-rustls")]
+    pub fn init_tls_with_subscriber<S>(
+        self,
+        addr: SocketAddr,
+        domain_name: String,
+        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+        subscriber: S,
+    ) -> Result<BackgroundTask, BuilderError>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        S: Send + Sync + 'static,
+    {
+        let (logger, bg_task) = self.connect_tls(addr, domain_name, client_config)?;
+
+        // If a subscriber was set then use it as the inner subscriber.
+        let subscriber = Layer::with_subscriber(logger, subscriber);
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            subscriber,
+        ))
+        .map_err(BuilderError::Global)?;
+
+        Ok(bg_task)
+    }
+
     /// Initialize logging and return TCP connection background task.
     pub fn init_tcp<T>(self, addr: T) -> Result<BackgroundTask, BuilderError>
     where
@@ -292,6 +367,17 @@ impl Builder {
         T: Send + Sync + 'static,
     {
         self.init_tcp_with_subscriber(addr, Registry::default())
+    }
+
+    /// Initialize logging and return TCP connection background task.
+    #[cfg(feature = "tokio-rustls")]
+    pub fn init_tls(
+        self,
+        addr: SocketAddr,
+        domain_name: String,
+        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+    ) -> Result<BackgroundTask, BuilderError> {
+        self.init_tls_with_subscriber(addr, domain_name, client_config, Registry::default())
     }
 
     /// Return `Logger` layer and a UDP connection background task.
@@ -490,13 +576,24 @@ where
     }
 }
 
-async fn handle_tcp_connection<S>(addr: SocketAddr, receiver: &mut S)
+async fn handle_tcp_connection<F, R, S, I>(addr: SocketAddr, mut f: F, receiver: &mut S)
 where
     S: Stream<Item = Result<Bytes, std::io::Error>>,
     S: Unpin,
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
+    F: FnMut(TcpStream) -> R + Send + Sync + Clone + 'static,
+    R: Future<Output = Result<I, std::io::Error>> + Send,
 {
-    // Try connect
-    let mut tcp_stream = match TcpStream::connect(addr).await {
+    let try_connect = async move {
+        let tcp = TcpStream::connect(addr).await?;
+        let wrapped = (f)(tcp).await?.compat_write();
+        let (_, write_half) = futures_util::AsyncReadExt::split(wrapped);
+        Ok::<_, std::io::Error>(write_half)
+    };
+
+    let try_connect_result = try_connect.await;
+
+    let writer = match try_connect_result {
         Ok(ok) => ok,
         Err(_) => {
             return;
@@ -504,8 +601,7 @@ where
     };
 
     // Writer
-    let (_, writer) = tcp_stream.split();
-    let mut sink = FramedWrite::new(writer, BytesCodec::new());
+    let mut sink = FramedWrite::new(writer.compat_write(), BytesCodec::new());
     if let Err(_err) = sink.send_all(receiver).await {
         // TODO: Add handler
     };
