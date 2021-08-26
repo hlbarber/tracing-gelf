@@ -243,7 +243,7 @@ impl Builder {
         f: F,
     ) -> Result<(Logger, BackgroundTask), BuilderError>
     where
-        F: FnMut(TcpStream) -> R + Send + Sync + Clone + 'static,
+        F: Fn(TcpStream) -> R + Send + Sync + Clone + 'static,
         R: Future<Output = Result<I, std::io::Error>> + Send,
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
         T: ToSocketAddrs,
@@ -280,9 +280,7 @@ impl Builder {
 
                     // Loop through the IP addresses that the hostname resolved to
                     for addr in addrs {
-                        if let Err(_err) =
-                            handle_tcp_connection(addr, f.clone(), &mut ok_receiver).await
-                        {
+                        if let Err(_err) = handle_tcp_connection(addr, &f, &mut ok_receiver).await {
                             // TODO: Add handler
                         }
                     }
@@ -420,7 +418,7 @@ impl Builder {
 
                     // Loop through the IP addresses that the hostname resolved to
                     for addr in addrs {
-                        if let Err(_err)=handle_udp_connection(addr, &mut receiver).await {
+                        if let Err(_err) = handle_udp_connection(addr, &mut receiver).await {
                             // TODO: Add handler
                         }
                     }
@@ -584,14 +582,14 @@ where
 
 async fn handle_tcp_connection<F, R, S, I>(
     addr: SocketAddr,
-    mut f: F,
+    f: &F,
     receiver: &mut S,
 ) -> Result<(), std::io::Error>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>>,
     S: Unpin,
     I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
-    F: FnMut(TcpStream) -> R + Send + Sync + Clone + 'static,
+    F: Fn(TcpStream) -> R + Send + Sync + Clone,
     R: Future<Output = Result<I, std::io::Error>> + Send,
 {
     let tcp = TcpStream::connect(addr).await?;
