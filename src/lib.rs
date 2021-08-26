@@ -212,14 +212,14 @@ impl Builder {
     pub fn connect_tls<T>(
         self,
         addr: T,
-        domain_name: String,
+        domain_name: &str,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
     ) -> Result<(Logger, BackgroundTask), BuilderError>
     where
         T: ToSocketAddrs,
         T: Send + Sync + 'static,
     {
-        let dnsname = tokio_rustls::webpki::DNSNameRef::try_from_ascii_str(&domain_name)
+        let dnsname = tokio_rustls::webpki::DNSNameRef::try_from_ascii_str(domain_name)
             .map_err(BuilderError::Dns)?
             .to_owned();
 
@@ -340,7 +340,7 @@ impl Builder {
     pub fn init_tls_with_subscriber<S>(
         self,
         addr: SocketAddr,
-        domain_name: String,
+        domain_name: &str,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
         subscriber: S,
     ) -> Result<BackgroundTask, BuilderError>
@@ -374,7 +374,7 @@ impl Builder {
     pub fn init_tls(
         self,
         addr: SocketAddr,
-        domain_name: String,
+        domain_name: &str,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
     ) -> Result<BackgroundTask, BuilderError> {
         self.init_tls_with_subscriber(addr, domain_name, client_config, Registry::default())
