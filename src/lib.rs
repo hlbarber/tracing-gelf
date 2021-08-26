@@ -338,14 +338,15 @@ impl Builder {
 
     /// Initialize logging with a given `Subscriber` and return TCP connection background task.
     #[cfg(feature = "tokio-rustls")]
-    pub fn init_tls_with_subscriber<S>(
+    pub fn init_tls_with_subscriber<T, S>(
         self,
-        addr: SocketAddr,
+        addr: T,
         domain_name: &str,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
         subscriber: S,
     ) -> Result<BackgroundTask, BuilderError>
     where
+        T: ToSocketAddrs + Send + Sync + 'static,
         S: Subscriber + for<'a> LookupSpan<'a>,
         S: Send + Sync + 'static,
     {
@@ -372,12 +373,15 @@ impl Builder {
 
     /// Initialize logging and return TCP connection background task.
     #[cfg(feature = "tokio-rustls")]
-    pub fn init_tls(
+    pub fn init_tls<T>(
         self,
-        addr: SocketAddr,
+        addr: T,
         domain_name: &str,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
-    ) -> Result<BackgroundTask, BuilderError> {
+    ) -> Result<BackgroundTask, BuilderError>
+    where
+        T: ToSocketAddrs + Send + Sync + 'static,
+    {
         self.init_tls_with_subscriber(addr, domain_name, client_config, Registry::default())
     }
 
