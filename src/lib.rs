@@ -77,7 +77,6 @@ use serde_json::{map::Map, Value};
 use tokio::net::{lookup_host, TcpStream, ToSocketAddrs, UdpSocket};
 use tokio::time;
 use tokio_util::codec::{BytesCodec, FramedWrite};
-use tokio_util::compat::{FuturesAsyncWriteCompatExt, TokioAsyncWriteCompatExt};
 use tokio_util::udp::UdpFramed;
 use tracing_core::dispatcher::SetGlobalDefaultError;
 use tracing_core::{
@@ -593,11 +592,11 @@ where
     R: Future<Output = Result<I, std::io::Error>> + Send,
 {
     let tcp = TcpStream::connect(addr).await?;
-    let wrapped = (f)(tcp).await?.compat_write();
-    let (_, writer) = futures_util::AsyncReadExt::split(wrapped);
+    let wrapped = (f)(tcp).await?;
+    let (_, writer) = tokio::io::split(wrapped);
 
     // Writer
-    let mut sink = FramedWrite::new(writer.compat_write(), BytesCodec::new());
+    let mut sink = FramedWrite::new(writer, BytesCodec::new());
     sink.send_all(receiver).await?;
 
     Ok(())
