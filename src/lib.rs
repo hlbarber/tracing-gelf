@@ -280,7 +280,11 @@ impl Builder {
 
                     // Loop through the IP addresses that the hostname resolved to
                     for addr in addrs {
-                        handle_tcp_connection(addr, f.clone(), &mut ok_receiver).await;
+                        if let Err(_err) =
+                            handle_tcp_connection(addr, f.clone(), &mut ok_receiver).await
+                        {
+                            // TODO: Add handler
+                        }
                     }
 
                     // Sleep before re-attempting
@@ -416,7 +420,9 @@ impl Builder {
 
                     // Loop through the IP addresses that the hostname resolved to
                     for addr in addrs {
-                        handle_udp_connection(addr, &mut receiver).await;
+                        if let Err(_err)=handle_udp_connection(addr, &mut receiver).await {
+                            // TODO: Add handler
+                        }
                     }
 
                     // Sleep before re-attempting
@@ -576,7 +582,11 @@ where
     }
 }
 
-async fn handle_tcp_connection<F, R, S, I>(addr: SocketAddr, mut f: F, receiver: &mut S)
+async fn handle_tcp_connection<F, R, S, I>(
+    addr: SocketAddr,
+    mut f: F,
+    receiver: &mut S,
+) -> Result<(), std::io::Error>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>>,
     S: Unpin,
@@ -584,30 +594,18 @@ where
     F: FnMut(TcpStream) -> R + Send + Sync + Clone + 'static,
     R: Future<Output = Result<I, std::io::Error>> + Send,
 {
-    let try_connect = async move {
-        let tcp = TcpStream::connect(addr).await?;
-        let wrapped = (f)(tcp).await?.compat_write();
-        let (_, write_half) = futures_util::AsyncReadExt::split(wrapped);
-        Ok::<_, std::io::Error>(write_half)
-    };
-
-    let try_connect_result = try_connect.await;
-
-    let writer = match try_connect_result {
-        Ok(ok) => ok,
-        Err(_) => {
-            return;
-        }
-    };
+    let tcp = TcpStream::connect(addr).await?;
+    let wrapped = (f)(tcp).await?.compat_write();
+    let (_, writer) = futures_util::AsyncReadExt::split(wrapped);
 
     // Writer
     let mut sink = FramedWrite::new(writer.compat_write(), BytesCodec::new());
-    if let Err(_err) = sink.send_all(receiver).await {
-        // TODO: Add handler
-    };
+    sink.send_all(receiver).await?;
+
+    Ok(())
 }
 
-async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S)
+async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S) -> Result<(), std::io::Error>
 where
     S: Stream<Item = Bytes>,
     S: Unpin,
@@ -619,20 +617,14 @@ where
         "[::]:0"
     };
     // Try connect
-    let udp_socket = match UdpSocket::bind(bind_addr).await {
-        Ok(ok) => ok,
-        Err(_) => {
-            return;
-        }
-    };
+    let udp_socket = UdpSocket::bind(bind_addr).await?;
 
     // Writer
     let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
     let (mut sink, _) = udp_stream.split();
     while let Some(bytes) = receiver.next().await {
-        if let Err(_err) = sink.send((bytes, addr)).await {
-            // TODO: Add handler
-            break;
-        };
+        sink.send((bytes, addr)).await?;
     }
+
+    Ok(())
 }
