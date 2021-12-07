@@ -302,7 +302,7 @@ impl Builder {
     }
 
     /// Return `Logger` and TCP connection background task.
-    fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    pub fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
     where
         T: ToSocketAddrs,
         T: Send + Sync + 'static,
