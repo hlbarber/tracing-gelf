@@ -124,7 +124,7 @@ pub enum BuilderError {
 
     /// DNS name error.
     #[cfg(feature = "rustls-tls")]
-    Dns(tokio_rustls::webpki::InvalidDNSNameError),
+    Dns(tokio_rustls::rustls::client::InvalidDnsNameError),
 }
 
 /// A builder for [`Logger`](struct.Logger.html).
@@ -218,18 +218,19 @@ impl Builder {
         T: ToSocketAddrs,
         T: Send + Sync + 'static,
     {
-        let dnsname = tokio_rustls::webpki::DNSNameRef::try_from_ascii_str(domain_name)
-            .map_err(BuilderError::Dns)?
-            .to_owned();
+        use std::convert::TryFrom;
+
+        let server_name =
+            tokio_rustls::rustls::ServerName::try_from(domain_name).map_err(BuilderError::Dns)?;
 
         self.connect_tcp_with_wrapper(addr, {
             move |s| {
-                let dnsname = dnsname.clone();
+                let server_name = server_name.clone();
                 let client_config = client_config.clone();
 
-                async move {
+                async {
                     let config = tokio_rustls::TlsConnector::from(client_config);
-                    config.connect(dnsname.as_ref(), s).await
+                    config.connect(server_name, s).await
                 }
             }
         })
