@@ -224,14 +224,11 @@ impl Builder {
             tokio_rustls::rustls::ServerName::try_from(domain_name).map_err(BuilderError::Dns)?;
 
         self.connect_tcp_with_wrapper(addr, {
-            move |s| {
+            move |tcp_stream| {
                 let server_name = server_name.clone();
-                let client_config = client_config.clone();
+                let config = tokio_rustls::TlsConnector::from(client_config.clone());
 
-                async {
-                    let config = tokio_rustls::TlsConnector::from(client_config);
-                    config.connect(server_name, s).await
-                }
+                config.connect(server_name, tcp_stream)
             }
         })
     }
@@ -243,7 +240,7 @@ impl Builder {
         f: F,
     ) -> Result<(Logger, BackgroundTask), BuilderError>
     where
-        F: Fn(TcpStream) -> R + Send + Sync + Clone + 'static,
+        F: Fn(TcpStream) -> R + Send + Sync + 'static,
         R: Future<Output = Result<I, std::io::Error>> + Send,
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
         T: ToSocketAddrs,
@@ -310,7 +307,7 @@ impl Builder {
         T: ToSocketAddrs,
         T: Send + Sync + 'static,
     {
-        self.connect_tcp_with_wrapper(addr, |s| async { Ok(s) })
+        self.connect_tcp_with_wrapper(addr, |tcp_stream| async { Ok(tcp_stream) })
     }
 
     /// Initialize logging with a given `Subscriber` and return TCP connection background task.
