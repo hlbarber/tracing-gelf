@@ -586,14 +586,14 @@ where
 
 async fn handle_tcp_connection<F, R, S, I>(
     addr: SocketAddr,
-    f: &F,
+    f: F,
     receiver: &mut S,
 ) -> Result<(), std::io::Error>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>>,
     S: Unpin,
     I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
-    F: Fn(TcpStream) -> R + Send + Sync + Clone,
+    F: FnOnce(TcpStream) -> R,
     R: Future<Output = Result<I, std::io::Error>> + Send,
 {
     let tcp = TcpStream::connect(addr).await?;
