@@ -122,8 +122,8 @@ pub enum BuilderError {
     /// Global dispatcher failed.
     Global(SetGlobalDefaultError),
 
-    /// DNS name error
-    #[cfg(feature = "tokio-rustls")]
+    /// DNS name error.
+    #[cfg(feature = "rustls-tls")]
     Dns(tokio_rustls::webpki::InvalidDNSNameError),
 }
 
@@ -207,7 +207,7 @@ impl Builder {
     }
 
     /// Return `Logger` and TLS connection background task.
-    #[cfg(feature = "tokio-rustls")]
+    #[cfg(feature = "rustls-tls")]
     pub fn connect_tls<T>(
         self,
         addr: T,
@@ -337,7 +337,7 @@ impl Builder {
     }
 
     /// Initialize logging with a given `Subscriber` and return TCP connection background task.
-    #[cfg(feature = "tokio-rustls")]
+    #[cfg(feature = "rustls-tls")]
     pub fn init_tls_with_subscriber<T, S>(
         self,
         addr: T,
@@ -372,7 +372,7 @@ impl Builder {
     }
 
     /// Initialize logging and return TCP connection background task.
-    #[cfg(feature = "tokio-rustls")]
+    #[cfg(feature = "rustls-tls")]
     pub fn init_tls<T>(
         self,
         addr: T,
