@@ -112,19 +112,23 @@ impl Logger {
 }
 
 /// The error type for [`Logger`](struct.Logger.html) building.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BuilderError {
     /// Could not resolve the hostname.
-    HostnameResolution(std::io::Error),
+    #[error("hostname resolution failed: {0}")]
+    HostnameResolution(#[source] std::io::Error),
     /// Could not coerce the OsString into a string.
+    #[error("hostname could not be parsed as an OsString: {}", .0.to_string_lossy().as_ref())]
     OsString(std::ffi::OsString),
     /// Global dispatcher failed.
-    Global(SetGlobalDefaultError),
+    #[error("global dispatcher failed to initialize")]
+    Global(#[source] SetGlobalDefaultError),
 
     /// DNS name error.
     #[cfg(feature = "rustls-tls")]
-    Dns(tokio_rustls::rustls::client::InvalidDnsNameError),
+    #[error("invalid DNS name: {0}")]
+    Dns(#[source] tokio_rustls::rustls::client::InvalidDnsNameError),
 }
 
 /// A builder for [`Logger`](struct.Logger.html).
