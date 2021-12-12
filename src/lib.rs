@@ -498,8 +498,8 @@ where
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("Span not found, this is a bug");
         let mut extensions = span.extensions_mut();
-        if let Some(mut object) = extensions.get_mut::<Map<String, Value>>() {
-            let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
+        if let Some(object) = extensions.get_mut::<Map<String, Value>>() {
+            let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(object);
             values.record(&mut add_field_visitor);
         } else {
             let mut object = Map::with_capacity(16);
