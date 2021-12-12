@@ -49,9 +49,6 @@ async fn main() {
 
     // Log a structured log
     tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
-
-    // Don't exit
-    loop {}
 }
 
 ```
@@ -92,9 +89,6 @@ async fn main() {
 
     // Log a structured log
     tracing::info!(message = "he's out", spinning_top = true);
-
-    // Don't exit
-    loop {}
 }
 
 ```
