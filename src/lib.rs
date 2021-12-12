@@ -121,6 +121,10 @@ pub enum BuilderError {
     OsString(std::ffi::OsString),
     /// Global dispatcher failed.
     Global(SetGlobalDefaultError),
+
+    /// DNS name error.
+    #[cfg(feature = "rustls-tls")]
+    Dns(tokio_rustls::rustls::client::InvalidDnsNameError),
 }
 
 /// A builder for [`Logger`](struct.Logger.html).
@@ -202,9 +206,43 @@ impl Builder {
         self
     }
 
-    /// Return `Logger` and TCP connection background task.
-    pub fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    /// Return `Logger` and TLS connection background task.
+    #[cfg(feature = "rustls-tls")]
+    pub fn connect_tls<T>(
+        self,
+        addr: T,
+        domain_name: &str,
+        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+    ) -> Result<(Logger, BackgroundTask), BuilderError>
     where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
+        use std::convert::TryFrom;
+
+        let server_name =
+            tokio_rustls::rustls::ServerName::try_from(domain_name).map_err(BuilderError::Dns)?;
+
+        self.connect_tcp_with_wrapper(addr, {
+            move |tcp_stream| {
+                let server_name = server_name.clone();
+                let config = tokio_rustls::TlsConnector::from(client_config.clone());
+
+                config.connect(server_name, tcp_stream)
+            }
+        })
+    }
+
+    /// Return `Logger` and TCP connection background task.
+    fn connect_tcp_with_wrapper<T, F, R, I>(
+        self,
+        addr: T,
+        f: F,
+    ) -> Result<(Logger, BackgroundTask), BuilderError>
+    where
+        F: Fn(TcpStream) -> R + Send + Sync + 'static,
+        R: Future<Output = Result<I, std::io::Error>> + Send,
+        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
         T: ToSocketAddrs,
         T: Send + Sync + 'static,
     {
@@ -239,7 +277,9 @@ impl Builder {
 
                     // Loop through the IP addresses that the hostname resolved to
                     for addr in addrs {
-                        handle_tcp_connection(addr, &mut ok_receiver).await;
+                        if let Err(_err) = handle_tcp_connection(addr, &f, &mut ok_receiver).await {
+                            // TODO: Add handler
+                        }
                     }
 
                     // Sleep before re-attempting
@@ -259,6 +299,15 @@ impl Builder {
         };
 
         Ok((logger, bg_task))
+    }
+
+    /// Return `Logger` and TCP connection background task.
+    pub fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    where
+        T: ToSocketAddrs,
+        T: Send + Sync + 'static,
+    {
+        self.connect_tcp_with_wrapper(addr, |tcp_stream| async { Ok(tcp_stream) })
     }
 
     /// Initialize logging with a given `Subscriber` and return TCP connection background task.
@@ -285,6 +334,32 @@ impl Builder {
         Ok(bg_task)
     }
 
+    /// Initialize logging with a given `Subscriber` and return TCP connection background task.
+    #[cfg(feature = "rustls-tls")]
+    pub fn init_tls_with_subscriber<T, S>(
+        self,
+        addr: T,
+        domain_name: &str,
+        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+        subscriber: S,
+    ) -> Result<BackgroundTask, BuilderError>
+    where
+        T: ToSocketAddrs + Send + Sync + 'static,
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        S: Send + Sync + 'static,
+    {
+        let (logger, bg_task) = self.connect_tls(addr, domain_name, client_config)?;
+
+        // If a subscriber was set then use it as the inner subscriber.
+        let subscriber = Layer::with_subscriber(logger, subscriber);
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            subscriber,
+        ))
+        .map_err(BuilderError::Global)?;
+
+        Ok(bg_task)
+    }
+
     /// Initialize logging and return TCP connection background task.
     pub fn init_tcp<T>(self, addr: T) -> Result<BackgroundTask, BuilderError>
     where
@@ -292,6 +367,20 @@ impl Builder {
         T: Send + Sync + 'static,
     {
         self.init_tcp_with_subscriber(addr, Registry::default())
+    }
+
+    /// Initialize logging and return TCP connection background task.
+    #[cfg(feature = "rustls-tls")]
+    pub fn init_tls<T>(
+        self,
+        addr: T,
+        domain_name: &str,
+        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+    ) -> Result<BackgroundTask, BuilderError>
+    where
+        T: ToSocketAddrs + Send + Sync + 'static,
+    {
+        self.init_tls_with_subscriber(addr, domain_name, client_config, Registry::default())
     }
 
     /// Return `Logger` layer and a UDP connection background task.
@@ -330,7 +419,9 @@ impl Builder {
 
                     // Loop through the IP addresses that the hostname resolved to
                     for addr in addrs {
-                        handle_udp_connection(addr, &mut receiver).await;
+                        if let Err(_err) = handle_udp_connection(addr, &mut receiver).await {
+                            // TODO: Add handler
+                        }
                     }
 
                     // Sleep before re-attempting
@@ -490,28 +581,30 @@ where
     }
 }
 
-async fn handle_tcp_connection<S>(addr: SocketAddr, receiver: &mut S)
+async fn handle_tcp_connection<F, R, S, I>(
+    addr: SocketAddr,
+    f: F,
+    receiver: &mut S,
+) -> Result<(), std::io::Error>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>>,
     S: Unpin,
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
+    F: FnOnce(TcpStream) -> R,
+    R: Future<Output = Result<I, std::io::Error>> + Send,
 {
-    // Try connect
-    let mut tcp_stream = match TcpStream::connect(addr).await {
-        Ok(ok) => ok,
-        Err(_) => {
-            return;
-        }
-    };
+    let tcp = TcpStream::connect(addr).await?;
+    let wrapped = (f)(tcp).await?;
+    let (_, writer) = tokio::io::split(wrapped);
 
     // Writer
-    let (_, writer) = tcp_stream.split();
     let mut sink = FramedWrite::new(writer, BytesCodec::new());
-    if let Err(_err) = sink.send_all(receiver).await {
-        // TODO: Add handler
-    };
+    sink.send_all(receiver).await?;
+
+    Ok(())
 }
 
-async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S)
+async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S) -> Result<(), std::io::Error>
 where
     S: Stream<Item = Bytes>,
     S: Unpin,
@@ -523,20 +616,14 @@ where
         "[::]:0"
     };
     // Try connect
-    let udp_socket = match UdpSocket::bind(bind_addr).await {
-        Ok(ok) => ok,
-        Err(_) => {
-            return;
-        }
-    };
+    let udp_socket = UdpSocket::bind(bind_addr).await?;
 
     // Writer
     let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
     let (mut sink, _) = udp_stream.split();
     while let Some(bytes) = receiver.next().await {
-        if let Err(_err) = sink.send((bytes, addr)).await {
-            // TODO: Add handler
-            break;
-        };
+        sink.send((bytes, addr)).await?;
     }
+
+    Ok(())
 }
