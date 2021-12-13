@@ -65,27 +65,33 @@
 mod no_subscriber;
 pub mod visitor;
 
-use std::future::Future;
-use std::net::SocketAddr;
+use std::{borrow::Cow, collections::HashMap, fmt::Display, future::Future, net::SocketAddr};
 
 use bytes::Bytes;
 use futures_channel::mpsc;
-use futures_util::stream::Stream;
-use futures_util::{SinkExt, StreamExt};
-use no_subscriber::NoSubscriber;
+use futures_util::{stream::Stream, SinkExt, StreamExt};
 use serde_json::{map::Map, Value};
-use tokio::net::{lookup_host, TcpStream, ToSocketAddrs, UdpSocket};
-use tokio::time;
-use tokio_util::codec::{BytesCodec, FramedWrite};
-use tokio_util::udp::UdpFramed;
-use tracing_core::dispatcher::SetGlobalDefaultError;
+use tokio::{
+    net::{lookup_host, TcpStream, ToSocketAddrs, UdpSocket},
+    time,
+};
+use tokio_util::{
+    codec::{BytesCodec, FramedWrite},
+    udp::UdpFramed,
+};
 use tracing_core::{
+    dispatcher::SetGlobalDefaultError,
     span::{Attributes, Id, Record},
     Event, Subscriber,
 };
 use tracing_futures::WithSubscriber;
-use tracing_subscriber::layer::{Context, Layer};
-use tracing_subscriber::{registry::LookupSpan, Registry};
+use tracing_subscriber::{
+    layer::{Context, Layer},
+    registry::LookupSpan,
+    Registry,
+};
+
+use no_subscriber::NoSubscriber;
 
 const DEFAULT_BUFFER: usize = 512;
 const DEFAULT_TIMEOUT: u32 = 10_000;
@@ -96,7 +102,7 @@ const DEFAULT_VERSION: &str = "1.1";
 /// [`Layer`]: https://docs.rs/tracing-subscriber/0.2.0-alpha.2/tracing_subscriber/layer/trait.Layer.html
 #[derive(Debug)]
 pub struct Logger {
-    base_object: Map<String, Value>,
+    base_object: HashMap<Cow<'static, str>, Value>,
     line_numbers: bool,
     file_names: bool,
     module_paths: bool,
@@ -134,7 +140,7 @@ pub enum BuilderError {
 /// A builder for [`Logger`](struct.Logger.html).
 #[derive(Debug)]
 pub struct Builder {
-    additional_fields: Map<String, Value>,
+    additional_fields: HashMap<Cow<'static, str>, Value>,
     version: Option<String>,
     file_names: bool,
     line_numbers: bool,
@@ -147,7 +153,7 @@ pub struct Builder {
 impl Default for Builder {
     fn default() -> Self {
         Builder {
-            additional_fields: Map::with_capacity(32),
+            additional_fields: HashMap::with_capacity(32),
             version: None,
             file_names: true,
             line_numbers: true,
@@ -163,14 +169,14 @@ type BackgroundTask = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl Builder {
     /// Add a persistent additional field to the GELF messages.
-    pub fn additional_field<K: ToString, V: Into<Value>>(mut self, key: K, value: V) -> Self {
+    pub fn additional_field<K: Display, V: Into<Value>>(mut self, key: K, value: V) -> Self {
         let coerced_value: Value = match value.into() {
             Value::Number(n) => Value::Number(n),
             Value::String(x) => Value::String(x),
             x => Value::String(x.to_string()),
         };
         self.additional_fields
-            .insert(format!("_{}", key.to_string()), coerced_value);
+            .insert(format!("_{}", key).into(), coerced_value);
         self
     }
 
@@ -258,11 +264,11 @@ impl Builder {
             .map_err(BuilderError::HostnameResolution)?
             .into_string()
             .map_err(BuilderError::OsString)?;
-        base_object.insert("host".to_string(), hostname.into());
+        base_object.insert("host".into(), hostname.into());
 
         // Add version
         let version = self.version.unwrap_or_else(|| DEFAULT_VERSION.to_string());
-        base_object.insert("version".to_string(), version.into());
+        base_object.insert("version".into(), version.into());
 
         // Get timeout
         let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
@@ -401,11 +407,11 @@ impl Builder {
             .map_err(BuilderError::HostnameResolution)?
             .into_string()
             .map_err(BuilderError::OsString)?;
-        base_object.insert("host".to_string(), hostname.into());
+        base_object.insert("host".into(), hostname.into());
 
         // Add version
         let version = self.version.unwrap_or_else(|| DEFAULT_VERSION.to_string());
-        base_object.insert("version".to_string(), version.into());
+        base_object.insert("version".into(), version.into());
 
         // Get timeout
         let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
@@ -488,7 +494,7 @@ where
         let mut extensions = span.extensions_mut();
 
         if extensions.get_mut::<Map<String, Value>>().is_none() {
-            let mut object = Map::with_capacity(16);
+            let mut object = HashMap::with_capacity(16);
             let mut visitor = visitor::AdditionalFieldVisitor::new(&mut object);
             attrs.record(&mut visitor);
             extensions.insert(object);
@@ -498,11 +504,11 @@ where
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("Span not found, this is a bug");
         let mut extensions = span.extensions_mut();
-        if let Some(object) = extensions.get_mut::<Map<String, Value>>() {
+        if let Some(object) = extensions.get_mut::<HashMap<Cow<'static, str>, Value>>() {
             let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(object);
             values.record(&mut add_field_visitor);
         } else {
-            let mut object = Map::with_capacity(16);
+            let mut object = HashMap::with_capacity(16);
             let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
             values.record(&mut add_field_visitor);
             extensions.insert(object)
@@ -511,13 +517,15 @@ where
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         // GELF object
-        let mut object: Map<String, Value> = self.base_object.clone();
+        let mut object = self.base_object.clone();
 
         // Get span name
         if self.spans {
             let span = ctx.scope().fold(String::new(), |mut spans, span| {
                 // Add span fields to the base object
-                if let Some(span_object) = span.extensions().get::<Map<String, Value>>() {
+                if let Some(span_object) =
+                    span.extensions().get::<HashMap<Cow<'static, str>, Value>>()
+                {
                     object.extend(span_object.clone());
                 }
                 if spans != String::new() {
@@ -529,7 +537,7 @@ where
                 spans
             });
 
-            object.insert("_span".to_string(), span.into());
+            object.insert("_span".into(), span.into());
         }
 
         // Extract metadata
@@ -542,26 +550,26 @@ where
             tracing_core::Level::DEBUG => 6,
             tracing_core::Level::TRACE => 7,
         };
-        object.insert("level".to_string(), level_num.into());
+        object.insert("level".into(), level_num.into());
 
         // Insert file
         if self.file_names {
             if let Some(file) = metadata.file() {
-                object.insert("_file".to_string(), file.into());
+                object.insert("_file".into(), file.into());
             }
         }
 
         // Insert line
         if self.line_numbers {
             if let Some(line) = metadata.line() {
-                object.insert("_line".to_string(), line.into());
+                object.insert("_line".into(), line.into());
             }
         }
 
         // Insert module path
         if self.module_paths {
             if let Some(module_path) = metadata.module_path() {
-                object.insert("_module_path".to_string(), module_path.into());
+                object.insert("_module_path".into(), module_path.into());
             }
         }
 
@@ -570,10 +578,14 @@ where
         event.record(&mut add_field_visitor);
 
         if !object.contains_key("short_message") {
-            object.insert("short_message".to_string(), "".into());
+            object.insert("short_message".into(), "".into());
         }
 
         // Serialize
+        let object = object
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect();
         let final_object = Value::Object(object);
         let mut raw = serde_json::to_vec(&final_object).unwrap(); // This is safe
         raw.push(0);

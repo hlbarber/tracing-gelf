@@ -1,30 +1,41 @@
 //! This module contains lower-level primitives for visiting fields.
 
-use std::fmt;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    fmt::{self, Display},
+};
 
-use serde_json::map::Map;
 use serde_json::Value;
 use tracing_core::field::{Field, Visit};
 
 /// The visitor necessary to record values in GELF format.
 #[derive(Debug)]
 pub struct AdditionalFieldVisitor<'a> {
-    object: &'a mut Map<String, Value>,
+    object: &'a mut HashMap<Cow<'static, str>, Value>,
 }
 
 impl<'a> AdditionalFieldVisitor<'a> {
     /// Create a new [`AdditionalFieldVisitor`] from a [`Map`].
-    pub fn new(object: &'a mut Map<String, Value>) -> Self {
+    pub fn new(object: &'a mut HashMap<Cow<'static, str>, Value>) -> Self {
         AdditionalFieldVisitor { object }
     }
 
-    fn record_additional_value<V: Into<Value>>(&mut self, field: &str, value: V) {
+    fn record_additional_value<Field, V>(&mut self, field: Field, value: V)
+    where
+        Field: Display,
+        V: Into<Value>,
+    {
         let new_key = format!("_{}", field);
-        self.object.insert(new_key, value.into());
+        self.object.insert(new_key.into(), value.into());
     }
 
-    fn record_value<V: Into<Value>>(&mut self, field: &str, value: V) {
-        self.object.insert(field.to_string(), value.into());
+    fn record_value<Field, V>(&mut self, field: Field, value: V)
+    where
+        Field: Into<Cow<'static, str>>,
+        V: Into<Value>,
+    {
+        self.object.insert(field.into(), value.into());
     }
 }
 
