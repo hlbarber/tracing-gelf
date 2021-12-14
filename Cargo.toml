@@ -1,6 +1,6 @@
 [package]
 name = "tracing-gelf"
-version = "0.5.2"
+version = "0.6.0"
 authors = ["Harry Barber <harrybarber@protonmail.com>"]
 edition = "2018"
 license = "MIT"
