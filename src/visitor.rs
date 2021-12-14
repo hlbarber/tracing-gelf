@@ -41,7 +41,7 @@ impl<'a> AdditionalFieldVisitor<'a> {
 
 impl<'a> Visit for AdditionalFieldVisitor<'a> {
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        let value = format!("{:#?}", value);
+        let value = format!("{:?}", value);
         let field_name = field.name();
         match field_name {
             "version" => self.record_value(field_name, value),
@@ -95,7 +95,7 @@ impl<'a> Visit for AdditionalFieldVisitor<'a> {
 
     fn record_u64(&mut self, field: &Field, value: u64) {
         let field_name = field.name();
-        match field.name() {
+        match field_name {
             // GELF requires version: String
             "version" => self.record_value(field_name, value.to_string()),
             // GELF requires host: String
