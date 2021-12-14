@@ -488,7 +488,7 @@ impl<S> Layer<S> for Logger
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("Span not found, this is a bug");
 
         let mut extensions = span.extensions_mut();
@@ -521,23 +521,29 @@ where
 
         // Get span name
         if self.spans {
-            let span = ctx.scope().fold(String::new(), |mut spans, span| {
-                // Add span fields to the base object
-                if let Some(span_object) =
-                    span.extensions().get::<HashMap<Cow<'static, str>, Value>>()
-                {
-                    object.extend(span_object.clone());
-                }
-                if spans != String::new() {
-                    spans = format!("{}:{}", spans, span.name());
-                } else {
-                    spans = span.name().to_string();
-                }
+            let span = ctx.current_span().id().and_then(|id| {
+                ctx.span_scope(id).map(|scope| {
+                    scope.from_root().fold(String::new(), |mut spans, span| {
+                        // Add span fields to the base object
+                        if let Some(span_object) =
+                            span.extensions().get::<HashMap<Cow<'static, str>, Value>>()
+                        {
+                            object.extend(span_object.clone());
+                        }
+                        if !spans.is_empty() {
+                            spans = format!("{}:{}", spans, span.name());
+                        } else {
+                            spans = span.name().to_string();
+                        }
 
-                spans
+                        spans
+                    })
+                })
             });
 
-            object.insert("_span".into(), span.into());
+            if let Some(span) = span {
+                object.insert("_span".into(), span.into());
+            }
         }
 
         // Extract metadata
