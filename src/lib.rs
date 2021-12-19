@@ -584,7 +584,9 @@ where
         event.record(&mut add_field_visitor);
 
         if !object.contains_key("short_message") {
-            object.insert("short_message".into(), "".into());
+            let short_message = object.remove("message")
+                .unwrap_or_else(|| "".into());
+            object.insert("short_message".into(), short_message);
         }
 
         // Serialize
