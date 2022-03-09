@@ -204,13 +204,13 @@ impl Builder {
         self
     }
 
-    /// Set the reconnection timeout in milliseconds. Defaults to 10 seconds.
+    /// Set the time in milliseconds to sleep between reconnection attempts. Defaults to 10 seconds.
     pub fn reconnection_timeout(mut self, millis: u32) -> Self {
         self.timeout_ms = Some(millis);
         self
     }
 
-    /// Sets the buffer length. Defaults to 512.
+    /// Set the buffer length. Defaults to 512.
     pub fn buffer(mut self, length: usize) -> Self {
         self.buffer = Some(length);
         self
