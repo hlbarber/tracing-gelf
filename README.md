@@ -17,6 +17,8 @@ Add this to your `Cargo.toml`:
 tracing-gelf = "0.6"
 ```
 
+The current `tracing-gelf` requires Rust 1.53 or later.
+
 ### TCP Logging
 
 ```rust
@@ -27,12 +29,12 @@ async fn main() {
     // Graylog address
     let address = "127.0.0.1:12201";
 
-    // Start tracing
-    let bg_task = Logger::builder().init_tcp(address).unwrap();
+    // Initialize subscriber
+    let conn_handle = Logger::builder().init_tcp(address).unwrap();
 
     // Spawn background task
     // Any futures executor can be used
-    tokio::spawn(bg_task);
+    tokio::spawn(conn_handle.connect());
 
     // Send a log to Graylog
     tracing::info!(message = "oooh, what's in here?");
@@ -40,14 +42,14 @@ async fn main() {
     // Create a span
     let span = tracing::info_span!("cave");
     span.in_scope(|| {
-        // Log inside a span
         let test = tracing::info_span!("deeper in cave", smell = "damp");
         test.in_scope(|| {
+            // Send a log to Graylog, inside a nested span
             tracing::warn!(message = "oh god, it's dark in here");
         })
     });
 
-    // Log a structured log
+    // Send a log to Graylog
     tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
 }
 
