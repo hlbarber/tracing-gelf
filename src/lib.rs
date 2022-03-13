@@ -101,7 +101,7 @@ impl Logger {
     }
 }
 
-/// The error type for [`Logger`](struct.Logger.html) building.
+/// The error type for [`Logger`] building.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BuilderError {
@@ -121,7 +121,7 @@ pub enum BuilderError {
     Dns(#[source] tokio_rustls::rustls::client::InvalidDnsNameError),
 }
 
-/// A builder for [`Logger`](struct.Logger.html).
+/// A builder for [`Logger`].
 #[derive(Debug)]
 pub struct Builder {
     additional_fields: HashMap<Cow<'static, str>, Value>,
@@ -148,7 +148,7 @@ impl Default for Builder {
 }
 
 impl Builder {
-    /// Add a persistent additional field to the GELF messages.
+    /// Adds a persistent additional field to the GELF messages.
     pub fn additional_field<K: Display, V: Into<Value>>(mut self, key: K, value: V) -> Self {
         let coerced_value: Value = match value.into() {
             Value::Number(n) => Value::Number(n),
@@ -160,25 +160,25 @@ impl Builder {
         self
     }
 
-    /// Set the GELF version number. Defaults to "1.1".
+    /// Sets the GELF version number. Defaults to "1.1".
     pub fn version<V: ToString>(mut self, version: V) -> Self {
         self.version = Some(version.to_string());
         self
     }
 
-    /// Set whether line numbers should be logged. Defaults to true.
+    /// Sets whether line numbers should be logged. Defaults to true.
     pub fn line_numbers(mut self, value: bool) -> Self {
         self.line_numbers = value;
         self
     }
 
-    /// Set whether file names should be logged. Defaults to true.
+    /// Sets whether file names should be logged. Defaults to true.
     pub fn file_names(mut self, value: bool) -> Self {
         self.file_names = value;
         self
     }
 
-    /// Set whether module paths should be logged. Defaults to true.
+    /// Sets whether module paths should be logged. Defaults to true.
     pub fn module_paths(mut self, value: bool) -> Self {
         self.module_paths = value;
         self
@@ -235,7 +235,31 @@ impl Builder {
         Ok((logger, handle))
     }
 
-    /// Returns a [`Logger`] and a [`ConnectionHandle`].
+    /// Returns a [`Logger`] and its UDP [`ConnectionHandle`].
+    pub fn connect_udp<A>(
+        self,
+        addr: A,
+    ) -> Result<(Logger, ConnectionHandle<A, UdpConnection>), BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
+    {
+        self.connect(addr, UdpConnection)
+    }
+
+    /// Returns a [`Logger`] and its TCP [`ConnectionHandle`].
+    pub fn connect_tcp<A>(
+        self,
+        addr: A,
+    ) -> Result<(Logger, ConnectionHandle<A, TcpConnection>), BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
+    {
+        self.connect(addr, TcpConnection)
+    }
+
+    /// Returns a [`Logger`] and a TLS [`ConnectionHandle`].
     #[cfg(feature = "rustls-tls")]
     pub fn connect_tls<A>(
         self,
@@ -260,19 +284,29 @@ impl Builder {
         )
     }
 
-    /// Return [`Logger`] and TCP connection background task.
-    pub fn connect_tcp<A>(
+    /// Initialize logging with a given `Subscriber` and return UDP connection background task.
+    pub fn init_udp_with_subscriber<S, A>(
         self,
         addr: A,
-    ) -> Result<(Logger, ConnectionHandle<A, TcpConnection>), BuilderError>
+        subscriber: S,
+    ) -> Result<ConnectionHandle<A, UdpConnection>, BuilderError>
     where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        S: Send + Sync + 'static,
         A: ToSocketAddrs,
         A: Send + Sync + 'static,
     {
-        self.connect(addr, TcpConnection)
+        let (logger, bg_task) = self.connect_udp(addr)?;
+        let subscriber = Layer::with_subscriber(logger, subscriber);
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            subscriber,
+        ))
+        .map_err(BuilderError::Global)?;
+
+        Ok(bg_task)
     }
 
-    /// Initialize logging with a given [`Subscriber`] and return TCP connection background task.
+    /// Initializes logging with a given [`Subscriber`] and returns its [`ConnectionHandle`].
     pub fn init_tcp_with_subscriber<A, S>(
         self,
         addr: A,
@@ -297,7 +331,7 @@ impl Builder {
         Ok(bg_task)
     }
 
-    /// Initialize logging with a given [`Subscriber`] and return TCP connection background task.
+    /// Initialize logging with a given [`Subscriber`] and returns its [`ConnectionHandle`].
     #[cfg(feature = "rustls-tls")]
     pub fn init_tls_with_subscriber<A, S>(
         self,
@@ -323,7 +357,7 @@ impl Builder {
         Ok(bg_task)
     }
 
-    /// Initialize logging and return TCP connection background task.
+    /// Initializes TCP logging and returns its [`ConnectionHandle`].
     pub fn init_tcp<A>(self, addr: A) -> Result<ConnectionHandle<A, TcpConnection>, BuilderError>
     where
         A: ToSocketAddrs,
@@ -332,7 +366,7 @@ impl Builder {
         self.init_tcp_with_subscriber(addr, Registry::default())
     }
 
-    /// Initialize logging and return TCP connection background task.
+    /// Initializes TLS logging and returns its [`ConnectionHandle`].
     #[cfg(feature = "rustls-tls")]
     pub fn init_tls<A>(
         self,
@@ -347,41 +381,7 @@ impl Builder {
         self.init_tls_with_subscriber(addr, domain_name, client_config, Registry::default())
     }
 
-    /// Return `Logger` layer and a UDP connection background task.
-    pub fn connect_udp<A>(
-        self,
-        addr: A,
-    ) -> Result<(Logger, ConnectionHandle<A, UdpConnection>), BuilderError>
-    where
-        A: ToSocketAddrs,
-        A: Send + Sync + 'static,
-    {
-        self.connect(addr, UdpConnection)
-    }
-
-    /// Initialize logging with a given `Subscriber` and return UDP connection background task.
-    pub fn init_udp_with_subscriber<S, A>(
-        self,
-        addr: A,
-        subscriber: S,
-    ) -> Result<ConnectionHandle<A, UdpConnection>, BuilderError>
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-        S: Send + Sync + 'static,
-        A: ToSocketAddrs,
-        A: Send + Sync + 'static,
-    {
-        let (logger, bg_task) = self.connect_udp(addr)?;
-        let subscriber = Layer::with_subscriber(logger, subscriber);
-        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
-            subscriber,
-        ))
-        .map_err(BuilderError::Global)?;
-
-        Ok(bg_task)
-    }
-
-    /// Initialize logging and return UDP connection background task.
+    /// Initialize UDP logging and returns its [`ConnectionHandle`].
     pub fn init_udp<A>(self, addr: A) -> Result<ConnectionHandle<A, UdpConnection>, BuilderError>
     where
         A: ToSocketAddrs,
