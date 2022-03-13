@@ -278,26 +278,23 @@ impl Builder {
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
         let mut ok_receiver = receiver.map(Ok);
 
-        let bg_task = Box::pin(
-            async move {
-                // Reconnection loop
-                loop {
-                    // Do a DNS lookup if `addr` is a hostname
-                    let addrs = lookup_host(&addr).await.into_iter().flatten();
+        let bg_task = Box::pin(async move {
+            // Reconnection loop
+            loop {
+                // Do a DNS lookup if `addr` is a hostname
+                let addrs = lookup_host(&addr).await.into_iter().flatten();
 
-                    // Loop through the IP addresses that the hostname resolved to
-                    for addr in addrs {
-                        if let Err(_err) = handle_tcp_connection(addr, &f, &mut ok_receiver).await {
-                            // TODO: Add handler
-                        }
+                // Loop through the IP addresses that the hostname resolved to
+                for resolved in addrs {
+                    if let Err(err) = handle_tcp_connection(resolved, &f, &mut ok_receiver).await {
+                        tracing::error!(error = %err, %resolved, "can't connect to graylog TCP backend");
                     }
-
-                    // Sleep before re-attempting
-                    time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
                 }
+
+                // Sleep before re-attempting
+                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             }
-            .with_subscriber(NoSubscriber),
-        );
+        });
 
         let logger = Logger {
             base_object,
@@ -420,26 +417,23 @@ impl Builder {
         // Construct background task
         let (sender, mut receiver) = mpsc::channel::<Bytes>(buffer);
 
-        let bg_task = Box::pin(
-            async move {
-                // Reconnection loop
-                loop {
-                    // Do a DNS lookup if `addr` is a hostname
-                    let addrs = lookup_host(&addr).await.into_iter().flatten();
+        let bg_task = Box::pin(async move {
+            // Reconnection loop
+            loop {
+                // Do a DNS lookup if `addr` is a hostname
+                let addrs = lookup_host(&addr).await.into_iter().flatten();
 
-                    // Loop through the IP addresses that the hostname resolved to
-                    for addr in addrs {
-                        if let Err(_err) = handle_udp_connection(addr, &mut receiver).await {
-                            // TODO: Add handler
-                        }
+                // Loop through the IP addresses that the hostname resolved to
+                for resolved in addrs {
+                    if let Err(err) = handle_udp_connection(resolved, &mut receiver).await {
+                        tracing::error!(error = %err, %resolved, "can't connect to graylog TCP backend");
                     }
-
-                    // Sleep before re-attempting
-                    time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
                 }
+
+                // Sleep before re-attempting
+                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
             }
-            .with_subscriber(NoSubscriber),
-        );
+        });
         let logger = Logger {
             base_object,
             file_names: self.file_names,
@@ -621,7 +615,7 @@ where
 
     // Writer
     let mut sink = FramedWrite::new(writer, BytesCodec::new());
-    sink.send_all(receiver).await?;
+    sink.send_all(receiver).with_subscriber(NoSubscriber).await?;
 
     Ok(())
 }
@@ -643,9 +637,19 @@ where
     // Writer
     let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
     let (mut sink, _) = udp_stream.split();
-    while let Some(bytes) = receiver.next().await {
-        sink.send((bytes, addr)).await?;
-    }
+    async {
+        let mut result = Ok(());
+        while let Some(bytes) = receiver.next().await {
+            match sink.send((bytes, addr)).await {
+                Ok(_) => {},
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
+        }
+        result
+    }.with_subscriber(NoSubscriber).await?;
 
     Ok(())
 }
