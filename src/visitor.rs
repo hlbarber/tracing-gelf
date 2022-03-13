@@ -11,13 +11,13 @@ use tracing_core::field::{Field, Visit};
 
 /// The visitor necessary to record values in GELF format.
 #[derive(Debug)]
-pub struct AdditionalFieldVisitor<'a> {
+pub(crate) struct AdditionalFieldVisitor<'a> {
     object: &'a mut HashMap<Cow<'static, str>, Value>,
 }
 
 impl<'a> AdditionalFieldVisitor<'a> {
     /// Create a new [`AdditionalFieldVisitor`] from a [`Map`].
-    pub fn new(object: &'a mut HashMap<Cow<'static, str>, Value>) -> Self {
+    pub(crate) fn new(object: &'a mut HashMap<Cow<'static, str>, Value>) -> Self {
         AdditionalFieldVisitor { object }
     }
 
