@@ -14,7 +14,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tracing-gelf = "0.6"
+tracing-gelf = "0.6.1"
 ```
 
 ### TCP Logging
