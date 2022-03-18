@@ -62,7 +62,6 @@
 //! [`Events`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
 //! [`GELF`]: https://docs.graylog.org/en/3.1/pages/gelf.html
 
-mod no_subscriber;
 pub mod visitor;
 
 use std::{borrow::Cow, collections::HashMap, fmt::Display, future::Future, net::SocketAddr};
@@ -82,6 +81,7 @@ use tokio_util::{
 use tracing_core::{
     dispatcher::SetGlobalDefaultError,
     span::{Attributes, Id, Record},
+    subscriber::NoSubscriber,
     Event, Subscriber,
 };
 use tracing_futures::WithSubscriber;
@@ -90,8 +90,6 @@ use tracing_subscriber::{
     registry::LookupSpan,
     Registry,
 };
-
-use no_subscriber::NoSubscriber;
 
 const DEFAULT_BUFFER: usize = 512;
 const DEFAULT_TIMEOUT: u32 = 10_000;
@@ -615,7 +613,7 @@ where
 
     // Writer
     let mut sink = FramedWrite::new(writer, BytesCodec::new());
-    sink.send_all(receiver).with_subscriber(NoSubscriber).await?;
+    sink.send_all(receiver).with_subscriber(NoSubscriber::default()).await?;
 
     Ok(())
 }
@@ -649,7 +647,7 @@ where
             }
         }
         result
-    }.with_subscriber(NoSubscriber).await?;
+    }.with_subscriber(NoSubscriber::default()).await?;
 
     Ok(())
 }
