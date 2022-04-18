@@ -6,11 +6,11 @@ async fn main() {
     let address = "127.0.0.1:12202";
 
     // Initialize subscriber, returning a connection handle
-    let conn_handle = Logger::builder().init_udp(address).unwrap();
+    let mut conn_handle = Logger::builder().init_udp(address).unwrap();
 
     // Spawn background task, this will connect and then forward messages to Graylog
     // Any futures executor can be used
-    tokio::spawn(conn_handle.connect());
+    tokio::spawn(async move { conn_handle.connect().await });
 
     // Send a log to Graylog
     tracing::info!(message = "our dreams feel real while we're in them");

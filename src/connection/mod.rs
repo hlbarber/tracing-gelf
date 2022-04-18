@@ -44,7 +44,7 @@ where
     /// Connects to Graylog via TCP using the address provided.
     ///
     /// This will perform DNS resolution and attempt to connect to each [`SocketAddr`] provided.
-    pub async fn connect(mut self) -> (Self, ConnectionErrors) {
+    pub async fn connect(&mut self) -> ConnectionErrors {
         // Do a DNS lookup if `addr` is a hostname
         let addrs = lookup_host(&self.addr).await.into_iter().flatten();
 
@@ -59,8 +59,7 @@ where
                 errors.push((addr, err));
             }
         }
-        let errors = ConnectionErrors(errors);
-        (self, errors)
+        ConnectionErrors(errors)
     }
 }
 
@@ -72,7 +71,7 @@ where
     /// Connects to Graylog via TLS using the address provided.
     ///
     /// This will perform DNS resolution and attempt to connect to each [`SocketAddr`] provided.
-    pub async fn connect(mut self) -> (Self, ConnectionErrors) {
+    pub async fn connect(&mut self) -> ConnectionErrors {
         // Do a DNS lookup if `addr` is a hostname
         let addrs = lookup_host(&self.addr).await.into_iter().flatten();
 
@@ -87,8 +86,7 @@ where
                 errors.push((addr, err));
             }
         }
-        let errors = ConnectionErrors(errors);
-        (self, errors)
+        ConnectionErrors(errors)
     }
 }
 
@@ -99,7 +97,7 @@ where
     /// Connects to Graylog via UDP using the address provided.
     ///
     /// This will perform DNS resolution and attempt to connect to each [`SocketAddr`] provided.
-    pub async fn connect(mut self) -> (Self, ConnectionErrors) {
+    pub async fn connect(&mut self) -> ConnectionErrors {
         // Do a DNS lookup if `addr` is a hostname
         let addrs = lookup_host(&self.addr).await.into_iter().flatten();
 
@@ -114,7 +112,6 @@ where
                 errors.push((addr, err));
             }
         }
-        let errors = ConnectionErrors(errors);
-        (self, errors)
+        ConnectionErrors(errors)
     }
 }
