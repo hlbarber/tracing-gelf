@@ -1,11 +1,6 @@
-#![warn(
-    missing_debug_implementations,
-    missing_docs,
-    rust_2018_idioms,
-    unreachable_pub
-)]
+#![warn(missing_debug_implementations, missing_docs, rust_2018_idioms)]
 
-//! Provides Graylog structured logging using the [`tracing`].
+//! Provides a [`tracing`] [`Layer`] for Graylog structured logging.
 //!
 //! # Usage
 //!
@@ -15,32 +10,31 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     // Graylog address
-//!     let address: SocketAddr = "127.0.0.1:12201".parse().unwrap();
+//!    // Graylog address
+//!    let address = "127.0.0.1:12201";
 //!
-//!     // Start tracing
-//!     let bg_task = Logger::builder().init_tcp(address).unwrap();
+//!    // Initialize subscriber
+//!    let conn_handle = Logger::builder().init_tcp(address).unwrap();
 //!
-//!     // Spawn background task
-//!     // Any futures executor can be used
-//!     tokio::spawn(bg_task);
+//!    // Spawn background task
+//!    // Any futures executor can be used
+//!    tokio::spawn(conn_handle.connect());
 //!
-//!     // Send a log to Graylog
-//!     tracing::info!(message = "oooh, what's in here?");
+//!    // Send a log to Graylog
+//!    tracing::info!(message = "oooh, what's in here?");
 //!
-//!     // Create a span
-//!     let span = tracing::info_span!("cave");
-//!     span.in_scope(|| {
-//!         // Log inside a span
-//!         let test = tracing::info_span!("deeper in cave", smell = "damp");
-//!         test.in_scope(|| {
-//!             tracing::warn!(message = "oh god, it's dark in here");
-//!         })
-//!     });
+//!    // Create a span
+//!    let span = tracing::info_span!("cave");
+//!    span.in_scope(|| {
+//!        let test = tracing::info_span!("deeper in cave", smell = "damp");
+//!        test.in_scope(|| {
+//!            // Send a log to Graylog, inside a nested span
+//!            tracing::warn!(message = "oh god, it's dark in here");
+//!        })
+//!    });
 //!
-//!     // Log a structured log
-//!     tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
-//!
+//!    // Send a log to Graylog
+//!    tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
 //! }
 //! ```
 //!
@@ -62,42 +56,32 @@
 //! [`Events`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
 //! [`GELF`]: https://docs.graylog.org/en/3.1/pages/gelf.html
 
-mod no_subscriber;
-pub mod visitor;
+mod connection;
+mod visitor;
 
-use std::{borrow::Cow, collections::HashMap, fmt::Display, future::Future, net::SocketAddr};
+use std::{borrow::Cow, collections::HashMap, fmt::Display};
 
 use bytes::Bytes;
 use futures_channel::mpsc;
-use futures_util::{stream::Stream, SinkExt, StreamExt};
 use serde_json::{map::Map, Value};
-use tokio::{
-    net::{lookup_host, TcpStream, ToSocketAddrs, UdpSocket},
-    time,
-};
-use tokio_util::{
-    codec::{BytesCodec, FramedWrite},
-    udp::UdpFramed,
-};
+use tokio::net::ToSocketAddrs;
 use tracing_core::{
     dispatcher::SetGlobalDefaultError,
     span::{Attributes, Id, Record},
     Event, Subscriber,
 };
-use tracing_futures::WithSubscriber;
 use tracing_subscriber::{
     layer::{Context, Layer},
     registry::LookupSpan,
     Registry,
 };
 
-use no_subscriber::NoSubscriber;
+pub use connection::*;
 
 const DEFAULT_BUFFER: usize = 512;
-const DEFAULT_TIMEOUT: u32 = 10_000;
 const DEFAULT_VERSION: &str = "1.1";
 
-/// `Logger` represents a [`Layer`] responsible for sending structured logs to Graylog.
+/// A [`Layer`] responsible for sending structured logs to Graylog.
 ///
 /// [`Layer`]: https://docs.rs/tracing-subscriber/0.2.0-alpha.2/tracing_subscriber/layer/trait.Layer.html
 #[derive(Debug)]
@@ -117,7 +101,7 @@ impl Logger {
     }
 }
 
-/// The error type for [`Logger`](struct.Logger.html) building.
+/// The error type for [`Logger`] building.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BuilderError {
@@ -137,7 +121,7 @@ pub enum BuilderError {
     Dns(#[source] tokio_rustls::rustls::client::InvalidDnsNameError),
 }
 
-/// A builder for [`Logger`](struct.Logger.html).
+/// A builder for [`Logger`].
 #[derive(Debug)]
 pub struct Builder {
     additional_fields: HashMap<Cow<'static, str>, Value>,
@@ -146,7 +130,6 @@ pub struct Builder {
     line_numbers: bool,
     module_paths: bool,
     spans: bool,
-    timeout_ms: Option<u32>,
     buffer: Option<usize>,
 }
 
@@ -159,16 +142,13 @@ impl Default for Builder {
             line_numbers: true,
             module_paths: true,
             spans: true,
-            timeout_ms: None,
             buffer: None,
         }
     }
 }
 
-type BackgroundTask = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
-
 impl Builder {
-    /// Add a persistent additional field to the GELF messages.
+    /// Adds a persistent additional field to the GELF messages.
     pub fn additional_field<K: Display, V: Into<Value>>(mut self, key: K, value: V) -> Self {
         let coerced_value: Value = match value.into() {
             Value::Number(n) => Value::Number(n),
@@ -180,81 +160,44 @@ impl Builder {
         self
     }
 
-    /// Set the GELF version number. Defaults to "1.1".
+    /// Sets the GELF version number. Defaults to "1.1".
     pub fn version<V: ToString>(mut self, version: V) -> Self {
         self.version = Some(version.to_string());
         self
     }
 
-    /// Set whether line numbers should be logged. Defaults to true.
+    /// Sets whether line numbers should be logged. Defaults to true.
     pub fn line_numbers(mut self, value: bool) -> Self {
         self.line_numbers = value;
         self
     }
 
-    /// Set whether file names should be logged. Defaults to true.
+    /// Sets whether file names should be logged. Defaults to true.
     pub fn file_names(mut self, value: bool) -> Self {
         self.file_names = value;
         self
     }
 
-    /// Set whether module paths should be logged. Defaults to true.
+    /// Sets whether module paths should be logged. Defaults to true.
     pub fn module_paths(mut self, value: bool) -> Self {
         self.module_paths = value;
         self
     }
 
-    /// Set the time in milliseconds to sleep between reconnection attempts. Defaults to 10 seconds.
-    pub fn reconnection_timeout(mut self, millis: u32) -> Self {
-        self.timeout_ms = Some(millis);
-        self
-    }
-
-    /// Set the buffer length. Defaults to 512.
+    /// Sets the buffer length. Defaults to 512.
     pub fn buffer(mut self, length: usize) -> Self {
         self.buffer = Some(length);
         self
     }
 
-    /// Return `Logger` and TLS connection background task.
-    #[cfg(feature = "rustls-tls")]
-    pub fn connect_tls<T>(
+    fn connect<A, Conn>(
         self,
-        addr: T,
-        domain_name: &str,
-        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
-    ) -> Result<(Logger, BackgroundTask), BuilderError>
+        addr: A,
+        conn: Conn,
+    ) -> Result<(Logger, ConnectionHandle<A, Conn>), BuilderError>
     where
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
-    {
-        use std::convert::TryFrom;
-
-        let server_name =
-            tokio_rustls::rustls::ServerName::try_from(domain_name).map_err(BuilderError::Dns)?;
-
-        self.connect_tcp_with_wrapper(addr, {
-            move |tcp_stream| {
-                let server_name = server_name.clone();
-                let config = tokio_rustls::TlsConnector::from(client_config.clone());
-
-                config.connect(server_name, tcp_stream)
-            }
-        })
-    }
-
-    /// Return `Logger` and TCP connection background task.
-    fn connect_tcp_with_wrapper<T, F, R, I>(
-        self,
-        addr: T,
-        f: F,
-    ) -> Result<(Logger, BackgroundTask), BuilderError>
-    where
-        F: Fn(TcpStream) -> R + Send + Sync + 'static,
-        R: Future<Output = Result<I, std::io::Error>> + Send,
-        I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
     {
         // Persistent fields
         let mut base_object = self.additional_fields;
@@ -270,32 +213,16 @@ impl Builder {
         let version = self.version.unwrap_or_else(|| DEFAULT_VERSION.to_string());
         base_object.insert("version".into(), version.into());
 
-        // Get timeout
-        let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
+        // Set buffer
         let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
 
         // Construct background task
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
-        let mut ok_receiver = receiver.map(Ok);
-
-        let bg_task = Box::pin(async move {
-            // Reconnection loop
-            loop {
-                // Do a DNS lookup if `addr` is a hostname
-                let addrs = lookup_host(&addr).await.into_iter().flatten();
-
-                // Loop through the IP addresses that the hostname resolved to
-                for resolved in addrs {
-                    if let Err(err) = handle_tcp_connection(resolved, &f, &mut ok_receiver).await {
-                        tracing::error!(error = %err, %resolved, "can't connect to graylog TCP backend");
-                    }
-                }
-
-                // Sleep before re-attempting
-                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
-            }
-        });
-
+        let handle = ConnectionHandle {
+            addr,
+            receiver,
+            conn,
+        };
         let logger = Logger {
             base_object,
             file_names: self.file_names,
@@ -305,29 +232,92 @@ impl Builder {
             sender,
         };
 
-        Ok((logger, bg_task))
+        Ok((logger, handle))
     }
 
-    /// Return `Logger` and TCP connection background task.
-    pub fn connect_tcp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
-    where
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
-    {
-        self.connect_tcp_with_wrapper(addr, |tcp_stream| async { Ok(tcp_stream) })
-    }
-
-    /// Initialize logging with a given `Subscriber` and return TCP connection background task.
-    pub fn init_tcp_with_subscriber<S, T>(
+    /// Returns a [`Logger`] and its UDP [`ConnectionHandle`].
+    pub fn connect_udp<A>(
         self,
-        addr: T,
+        addr: A,
+    ) -> Result<(Logger, ConnectionHandle<A, UdpConnection>), BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
+    {
+        self.connect(addr, UdpConnection)
+    }
+
+    /// Returns a [`Logger`] and its TCP [`ConnectionHandle`].
+    pub fn connect_tcp<A>(
+        self,
+        addr: A,
+    ) -> Result<(Logger, ConnectionHandle<A, TcpConnection>), BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
+    {
+        self.connect(addr, TcpConnection)
+    }
+
+    /// Returns a [`Logger`] and a TLS [`ConnectionHandle`].
+    #[cfg(feature = "rustls-tls")]
+    pub fn connect_tls<A>(
+        self,
+        addr: A,
+        domain_name: &str,
+        client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+    ) -> Result<(Logger, ConnectionHandle<A, TlsConnection>), BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
+    {
+        use std::convert::TryFrom;
+        let server_name =
+            tokio_rustls::rustls::ServerName::try_from(domain_name).map_err(BuilderError::Dns)?;
+
+        self.connect(
+            addr,
+            TlsConnection {
+                server_name,
+                client_config,
+            },
+        )
+    }
+
+    /// Initialize logging with a given `Subscriber` and return UDP connection background task.
+    pub fn init_udp_with_subscriber<S, A>(
+        self,
+        addr: A,
         subscriber: S,
-    ) -> Result<BackgroundTask, BuilderError>
+    ) -> Result<ConnectionHandle<A, UdpConnection>, BuilderError>
     where
         S: Subscriber + for<'a> LookupSpan<'a>,
         S: Send + Sync + 'static,
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
+    {
+        let (logger, bg_task) = self.connect_udp(addr)?;
+        let subscriber = Layer::with_subscriber(logger, subscriber);
+        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
+            subscriber,
+        ))
+        .map_err(BuilderError::Global)?;
+
+        Ok(bg_task)
+    }
+
+    /// Initializes logging with a given [`Subscriber`] and returns its [`ConnectionHandle`].
+    pub fn init_tcp_with_subscriber<A, S>(
+        self,
+        addr: A,
+        subscriber: S,
+    ) -> Result<ConnectionHandle<A, TcpConnection>, BuilderError>
+    where
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
+
+        S: Subscriber + for<'a> LookupSpan<'a>,
+        S: Send + Sync + 'static,
     {
         let (logger, bg_task) = self.connect_tcp(addr)?;
 
@@ -341,17 +331,17 @@ impl Builder {
         Ok(bg_task)
     }
 
-    /// Initialize logging with a given `Subscriber` and return TCP connection background task.
+    /// Initialize logging with a given [`Subscriber`] and returns its [`ConnectionHandle`].
     #[cfg(feature = "rustls-tls")]
-    pub fn init_tls_with_subscriber<T, S>(
+    pub fn init_tls_with_subscriber<A, S>(
         self,
-        addr: T,
+        addr: A,
         domain_name: &str,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
         subscriber: S,
-    ) -> Result<BackgroundTask, BuilderError>
+    ) -> Result<ConnectionHandle<A, TlsConnection>, BuilderError>
     where
-        T: ToSocketAddrs + Send + Sync + 'static,
+        A: ToSocketAddrs + Send + Sync + 'static,
         S: Subscriber + for<'a> LookupSpan<'a>,
         S: Send + Sync + 'static,
     {
@@ -367,112 +357,35 @@ impl Builder {
         Ok(bg_task)
     }
 
-    /// Initialize logging and return TCP connection background task.
-    pub fn init_tcp<T>(self, addr: T) -> Result<BackgroundTask, BuilderError>
+    /// Initializes TCP logging and returns its [`ConnectionHandle`].
+    pub fn init_tcp<A>(self, addr: A) -> Result<ConnectionHandle<A, TcpConnection>, BuilderError>
     where
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
     {
         self.init_tcp_with_subscriber(addr, Registry::default())
     }
 
-    /// Initialize logging and return TCP connection background task.
+    /// Initializes TLS logging and returns its [`ConnectionHandle`].
     #[cfg(feature = "rustls-tls")]
-    pub fn init_tls<T>(
+    pub fn init_tls<A>(
         self,
-        addr: T,
+        addr: A,
         domain_name: &str,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
-    ) -> Result<BackgroundTask, BuilderError>
+    ) -> Result<ConnectionHandle<A, TlsConnection>, BuilderError>
     where
-        T: ToSocketAddrs + Send + Sync + 'static,
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
     {
         self.init_tls_with_subscriber(addr, domain_name, client_config, Registry::default())
     }
 
-    /// Return `Logger` layer and a UDP connection background task.
-    pub fn connect_udp<T>(self, addr: T) -> Result<(Logger, BackgroundTask), BuilderError>
+    /// Initialize UDP logging and returns its [`ConnectionHandle`].
+    pub fn init_udp<A>(self, addr: A) -> Result<ConnectionHandle<A, UdpConnection>, BuilderError>
     where
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
-    {
-        // Persistent fields
-        let mut base_object = self.additional_fields;
-
-        // Get hostname
-        let hostname = hostname::get()
-            .map_err(BuilderError::HostnameResolution)?
-            .into_string()
-            .map_err(BuilderError::OsString)?;
-        base_object.insert("host".into(), hostname.into());
-
-        // Add version
-        let version = self.version.unwrap_or_else(|| DEFAULT_VERSION.to_string());
-        base_object.insert("version".into(), version.into());
-
-        // Get timeout
-        let timeout_ms = self.timeout_ms.unwrap_or(DEFAULT_TIMEOUT);
-        let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
-
-        // Construct background task
-        let (sender, mut receiver) = mpsc::channel::<Bytes>(buffer);
-
-        let bg_task = Box::pin(async move {
-            // Reconnection loop
-            loop {
-                // Do a DNS lookup if `addr` is a hostname
-                let addrs = lookup_host(&addr).await.into_iter().flatten();
-
-                // Loop through the IP addresses that the hostname resolved to
-                for resolved in addrs {
-                    if let Err(err) = handle_udp_connection(resolved, &mut receiver).await {
-                        tracing::error!(error = %err, %resolved, "can't connect to graylog TCP backend");
-                    }
-                }
-
-                // Sleep before re-attempting
-                time::sleep(time::Duration::from_millis(timeout_ms as u64)).await;
-            }
-        });
-        let logger = Logger {
-            base_object,
-            file_names: self.file_names,
-            line_numbers: self.line_numbers,
-            module_paths: self.module_paths,
-            spans: self.spans,
-            sender,
-        };
-
-        Ok((logger, bg_task))
-    }
-
-    /// Initialize logging with a given `Subscriber` and return UDP connection background task.
-    pub fn init_udp_with_subscriber<S, T>(
-        self,
-        addr: T,
-        subscriber: S,
-    ) -> Result<BackgroundTask, BuilderError>
-    where
-        S: Subscriber + for<'a> LookupSpan<'a>,
-        S: Send + Sync + 'static,
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
-    {
-        let (logger, bg_task) = self.connect_udp(addr)?;
-        let subscriber = Layer::with_subscriber(logger, subscriber);
-        tracing_core::dispatcher::set_global_default(tracing_core::dispatcher::Dispatch::new(
-            subscriber,
-        ))
-        .map_err(BuilderError::Global)?;
-
-        Ok(bg_task)
-    }
-
-    /// Initialize logging and return UDP connection background task.
-    pub fn init_udp<T>(self, addr: T) -> Result<BackgroundTask, BuilderError>
-    where
-        T: ToSocketAddrs,
-        T: Send + Sync + 'static,
+        A: ToSocketAddrs,
+        A: Send + Sync + 'static,
     {
         self.init_udp_with_subscriber(addr, Registry::default())
     }
@@ -483,7 +396,7 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        let span = ctx.span(id).expect("Span not found, this is a bug");
+        let span = ctx.span(id).expect("span not found, this is a bug");
 
         let mut extensions = span.extensions_mut();
 
@@ -496,7 +409,7 @@ where
     }
 
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
-        let span = ctx.span(id).expect("Span not found, this is a bug");
+        let span = ctx.span(id).expect("span not found, this is a bug");
         let mut extensions = span.extensions_mut();
         if let Some(object) = extensions.get_mut::<HashMap<Cow<'static, str>, Value>>() {
             let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(object);
@@ -595,61 +508,4 @@ where
             // TODO: Add handler
         };
     }
-}
-
-async fn handle_tcp_connection<F, R, S, I>(
-    addr: SocketAddr,
-    f: F,
-    receiver: &mut S,
-) -> Result<(), std::io::Error>
-where
-    S: Stream<Item = Result<Bytes, std::io::Error>>,
-    S: Unpin,
-    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
-    F: FnOnce(TcpStream) -> R,
-    R: Future<Output = Result<I, std::io::Error>> + Send,
-{
-    let tcp = TcpStream::connect(addr).await?;
-    let wrapped = (f)(tcp).await?;
-    let (_, writer) = tokio::io::split(wrapped);
-
-    // Writer
-    let mut sink = FramedWrite::new(writer, BytesCodec::new());
-    sink.send_all(receiver).with_subscriber(NoSubscriber).await?;
-
-    Ok(())
-}
-
-async fn handle_udp_connection<S>(addr: SocketAddr, receiver: &mut S) -> Result<(), std::io::Error>
-where
-    S: Stream<Item = Bytes>,
-    S: Unpin,
-{
-    // Bind address version must match address version
-    let bind_addr = if addr.is_ipv4() {
-        "0.0.0.0:0"
-    } else {
-        "[::]:0"
-    };
-    // Try connect
-    let udp_socket = UdpSocket::bind(bind_addr).await?;
-
-    // Writer
-    let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
-    let (mut sink, _) = udp_stream.split();
-    async {
-        let mut result = Ok(());
-        while let Some(bytes) = receiver.next().await {
-            match sink.send((bytes, addr)).await {
-                Ok(_) => {},
-                Err(e) => {
-                    result = Err(e);
-                    break;
-                }
-            }
-        }
-        result
-    }.with_subscriber(NoSubscriber).await?;
-
-    Ok(())
 }

@@ -5,12 +5,12 @@ async fn main() {
     // Graylog address
     let address = "127.0.0.1:12201";
 
-    // Start tracing
-    let bg_task = Logger::builder().init_tcp(address).unwrap();
+    // Initialize subscriber, returning a connection handle
+    let mut conn_handle = Logger::builder().init_tcp(address).unwrap();
 
-    // Spawn background task
+    // Spawn background task, this will connect and then forward messages to Graylog
     // Any futures executor can be used
-    tokio::spawn(bg_task);
+    tokio::spawn(async move { conn_handle.connect().await });
 
     // Send a log to Graylog
     tracing::info!(message = "oooh, what's in here?");
@@ -18,14 +18,14 @@ async fn main() {
     // Create a span
     let span = tracing::info_span!("cave");
     span.in_scope(|| {
-        // Log inside a span
         let test = tracing::info_span!("deeper in cave", smell = "damp");
         test.in_scope(|| {
+            // Send a log to Graylog, inside a nested span
             tracing::warn!(message = "oh god, it's dark in here");
         })
     });
 
-    // Log a structured log
+    // Send a log to Graylog
     tracing::error!(message = "i'm glad to be out", spook_lvl = 3, ruck_sack = ?["glasses", "inhaler", "large bat"]);
 
     // Don't exit
