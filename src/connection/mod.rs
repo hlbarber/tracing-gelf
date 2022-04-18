@@ -7,9 +7,9 @@ use bytes::Bytes;
 use futures_channel::mpsc;
 use tokio::net::{lookup_host, ToSocketAddrs};
 use tracing_core::subscriber::NoSubscriber;
+use tracing_futures::WithSubscriber;
 
 pub use tcp::*;
-use tracing_futures::WithSubscriber;
 pub use udp::*;
 
 /// A sequence of [errors](std::io::Error) which occurred during a connection attempt.
