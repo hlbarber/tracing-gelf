@@ -14,11 +14,11 @@
 //!    let address = "127.0.0.1:12201";
 //!
 //!    // Initialize subscriber
-//!    let conn_handle = Logger::builder().init_tcp(address).unwrap();
+//!    let mut conn_handle = Logger::builder().init_tcp(address).unwrap();
 //!
 //!    // Spawn background task
 //!    // Any futures executor can be used
-//!    tokio::spawn(conn_handle.connect());
+//!    tokio::spawn(async move { conn_handle.connect().await });
 //!
 //!    // Send a log to Graylog
 //!    tracing::info!(message = "oooh, what's in here?");
