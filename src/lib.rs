@@ -126,6 +126,7 @@ pub enum BuilderError {
 pub struct Builder {
     additional_fields: HashMap<Cow<'static, str>, Value>,
     version: Option<String>,
+    host: Option<String>,
     file_names: bool,
     line_numbers: bool,
     module_paths: bool,
@@ -138,6 +139,7 @@ impl Default for Builder {
         Builder {
             additional_fields: HashMap::with_capacity(32),
             version: None,
+            host: None,
             file_names: true,
             line_numbers: true,
             module_paths: true,
@@ -163,6 +165,12 @@ impl Builder {
     /// Sets the GELF version number. Defaults to "1.1".
     pub fn version<V: ToString>(mut self, version: V) -> Self {
         self.version = Some(version.to_string());
+        self
+    }
+
+    /// Sets the `host` field. Defaults to the system's host name.
+    pub fn host<V: ToString>(mut self, host: V) -> Self {
+        self.host = Some(host.to_string());
         self
     }
 
@@ -203,10 +211,14 @@ impl Builder {
         let mut base_object = self.additional_fields;
 
         // Get hostname
-        let hostname = hostname::get()
-            .map_err(BuilderError::HostnameResolution)?
-            .into_string()
-            .map_err(BuilderError::OsString)?;
+        let hostname = if let Some(host) = self.host {
+            host
+        } else {
+            hostname::get()
+                .map_err(BuilderError::HostnameResolution)?
+                .into_string()
+                .map_err(BuilderError::OsString)?
+        };
         base_object.insert("host".into(), hostname.into());
 
         // Add version
