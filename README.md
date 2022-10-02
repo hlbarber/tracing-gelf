@@ -14,7 +14,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tracing-gelf = "0.6"
+tracing-gelf = "0.7.1"
 ```
 
 The current `tracing-gelf` requires Rust 1.53 or later.
