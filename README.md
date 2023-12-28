@@ -14,10 +14,8 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tracing-gelf = "0.7.1"
+tracing-gelf = "0.8.0"
 ```
-
-The current `tracing-gelf` requires Rust 1.53 or later.
 
 ### TCP Logging
 
