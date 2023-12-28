@@ -1,4 +1,4 @@
-#![warn(missing_debug_implementations, missing_docs, rust_2018_idioms)]
+#![warn(missing_debug_implementations, missing_docs)]
 
 //! Provides a [`tracing`] [`Layer`] for Graylog structured logging.
 //!
@@ -114,11 +114,6 @@ pub enum BuilderError {
     /// Global dispatcher failed.
     #[error("global dispatcher failed to initialize")]
     Global(#[source] SetGlobalDefaultError),
-
-    /// DNS name error.
-    #[cfg(feature = "rustls-tls")]
-    #[error("invalid DNS name")]
-    Dns(#[source] tokio_rustls::rustls::client::InvalidDnsNameError),
 }
 
 /// A builder for [`Logger`].
@@ -276,17 +271,13 @@ impl Builder {
     pub fn connect_tls<A>(
         self,
         addr: A,
-        domain_name: &str,
+        server_name: rustls_pki_types::ServerName<'static>,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
     ) -> Result<(Logger, ConnectionHandle<A, TlsConnection>), BuilderError>
     where
         A: ToSocketAddrs,
         A: Send + Sync + 'static,
     {
-        use std::convert::TryFrom;
-        let server_name =
-            tokio_rustls::rustls::ServerName::try_from(domain_name).map_err(BuilderError::Dns)?;
-
         self.connect(
             addr,
             TlsConnection {
@@ -348,7 +339,7 @@ impl Builder {
     pub fn init_tls_with_subscriber<A, S>(
         self,
         addr: A,
-        domain_name: &str,
+        server_name: rustls_pki_types::ServerName<'static>,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
         subscriber: S,
     ) -> Result<ConnectionHandle<A, TlsConnection>, BuilderError>
@@ -357,7 +348,7 @@ impl Builder {
         S: Subscriber + for<'a> LookupSpan<'a>,
         S: Send + Sync + 'static,
     {
-        let (logger, bg_task) = self.connect_tls(addr, domain_name, client_config)?;
+        let (logger, bg_task) = self.connect_tls(addr, server_name, client_config)?;
 
         // If a subscriber was set then use it as the inner subscriber.
         let subscriber = Layer::with_subscriber(logger, subscriber);
@@ -383,14 +374,14 @@ impl Builder {
     pub fn init_tls<A>(
         self,
         addr: A,
-        domain_name: &str,
+        server_name: rustls_pki_types::ServerName<'static>,
         client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
     ) -> Result<ConnectionHandle<A, TlsConnection>, BuilderError>
     where
         A: ToSocketAddrs,
         A: Send + Sync + 'static,
     {
-        self.init_tls_with_subscriber(addr, domain_name, client_config, Registry::default())
+        self.init_tls_with_subscriber(addr, server_name, client_config, Registry::default())
     }
 
     /// Initialize UDP logging and returns its [`ConnectionHandle`].

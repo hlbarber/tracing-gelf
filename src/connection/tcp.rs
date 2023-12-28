@@ -50,7 +50,7 @@ impl TcpConnection {
 /// A TLS connection to Graylog.
 #[cfg(feature = "rustls-tls")]
 pub struct TlsConnection {
-    pub(crate) server_name: tokio_rustls::rustls::ServerName,
+    pub(crate) server_name: rustls_pki_types::ServerName<'static>,
     pub(crate) client_config: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
 }
 
@@ -66,9 +66,8 @@ impl TlsConnection {
     {
         let wrapper = move |tcp_stream| {
             let server_name = self.server_name.clone();
-            let config = tokio_rustls::TlsConnector::from(self.client_config.clone());
-
-            config.connect(server_name, tcp_stream)
+            tokio_rustls::TlsConnector::from(self.client_config.clone())
+                .connect(server_name, tcp_stream)
         };
         handle_tcp(addr, wrapper, receiver).await
     }
