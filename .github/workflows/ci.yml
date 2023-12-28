@@ -1,0 +1,48 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, miri
+      - uses: taiki-e/install-action@cargo-hack
+      - run: cargo hack check --each-feature
+      - run: cargo hack test --each-feature
+      - run: cargo hack clippy --each-feature
+      - run: cargo hack miri test --each-feature
+
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --check
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: taiki-e/install-action@cargo-hack
+      - run: cargo hack run --example basic --each-feature
+      - run: cargo hack miri run --example basic --each-feature
