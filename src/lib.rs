@@ -106,7 +106,7 @@ impl Logger {
 #[non_exhaustive]
 pub enum BuilderError {
     /// Could not resolve the hostname.
-    #[error("hostname resolution failed: {0}")]
+    #[error("hostname resolution failed")]
     HostnameResolution(#[source] std::io::Error),
     /// Could not coerce the OsString into a string.
     #[error("hostname could not be parsed as an OsString: {}", .0.to_string_lossy().as_ref())]
@@ -117,7 +117,7 @@ pub enum BuilderError {
 
     /// DNS name error.
     #[cfg(feature = "rustls-tls")]
-    #[error("invalid DNS name: {0}")]
+    #[error("invalid DNS name")]
     Dns(#[source] tokio_rustls::rustls::client::InvalidDnsNameError),
 }
 
