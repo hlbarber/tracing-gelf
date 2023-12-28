@@ -4,8 +4,8 @@ version = "0.8.0"
 authors = ["Harry Barber <harrybarber@protonmail.com>"]
 edition = "2021"
 license = "MIT"
-homepage = "https://github.com/hlb8122/tracing-gelf"
-repository = "https://github.com/hlb8122/tracing-gelf"
+homepage = "https://github.com/hlbarber/tracing-gelf"
+repository = "https://github.com/hlbarber/tracing-gelf"
 keywords = ["graylog", "logging", "tracing", "tcp", "udp"]
 description = """
 A Graylog tracing library.
@@ -14,7 +14,7 @@ categories = ["development-tools"]
 exclude = ["/.travis.yml"]
 
 [badges]
-travis-ci = { repository = "hlb8122/tracing-gelf" }
+travis-ci = { repository = "hlbarber/tracing-gelf" }
 
 [features]
 rustls-tls = ["tokio-rustls", "rustls-pki-types"]

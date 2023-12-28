@@ -2,7 +2,7 @@
 
 A Graylog [`tracing`](https://github.com/tokio-rs/tracing) library.
 
-[![Build Status](https://travis-ci.org/hlb8122/tracing-gelf.svg?branch=master)](https://travis-ci.org/hlb8122/tracing-gelf)
+[![Build Status](https://travis-ci.org/hlbarber/tracing-gelf.svg?branch=master)](https://travis-ci.org/hlbarber/tracing-gelf)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Cargo](https://img.shields.io/crates/v/tracing-gelf.svg)](https://crates.io/crates/tracing-gelf)
 [![Documentation](https://docs.rs/tracing-gelf/badge.svg)](
