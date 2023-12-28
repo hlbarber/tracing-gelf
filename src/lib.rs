@@ -95,7 +95,7 @@ pub struct Logger {
 }
 
 impl Logger {
-    /// Create a default [`Logger`] configuration, which can then be customized.
+    /// Creates a default [`Logger`] configuration, which can then be customized.
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -108,7 +108,7 @@ pub enum BuilderError {
     /// Could not resolve the hostname.
     #[error("hostname resolution failed")]
     HostnameResolution(#[source] std::io::Error),
-    /// Could not coerce the OsString into a string.
+    /// Could not coerce the [`OsString`](std::ffi::OsString) into a string.
     #[error("hostname could not be parsed as an OsString: {}", .0.to_string_lossy().as_ref())]
     OsString(std::ffi::OsString),
     /// Global dispatcher failed.
@@ -271,7 +271,7 @@ impl Builder {
         self.connect(addr, TcpConnection)
     }
 
-    /// Returns a [`Logger`] and a TLS [`ConnectionHandle`].
+    /// Returns a [`Logger`] and its TLS [`ConnectionHandle`].
     #[cfg(feature = "rustls-tls")]
     pub fn connect_tls<A>(
         self,
@@ -296,7 +296,7 @@ impl Builder {
         )
     }
 
-    /// Initialize logging with a given `Subscriber` and return UDP connection background task.
+    /// Initialize logging with a given [`Subscriber`] and returns its UDP [`ConnectionHandle`].
     pub fn init_udp_with_subscriber<S, A>(
         self,
         addr: A,
@@ -318,7 +318,7 @@ impl Builder {
         Ok(bg_task)
     }
 
-    /// Initializes logging with a given [`Subscriber`] and returns its [`ConnectionHandle`].
+    /// Initializes logging with a given [`Subscriber`] and returns its TCP [`ConnectionHandle`].
     pub fn init_tcp_with_subscriber<A, S>(
         self,
         addr: A,
