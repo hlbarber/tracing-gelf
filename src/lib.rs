@@ -1,6 +1,6 @@
 #![warn(missing_debug_implementations, missing_docs)]
 
-//! Provides a [`tracing`] [`Layer`] for Graylog structured logging.
+//! Provides a [`tracing`](https://docs.rs/tracing) [`Layer`] for Graylog structured logging.
 //!
 //! # Usage
 //!
@@ -40,21 +40,18 @@
 //!
 //! # GELF Encoding
 //!
-//! [`Events`] are encoded into [`GELF format`](https://docs.graylog.org/en/3.1/pages/gelf.html)
-//! as follows:
-//! * [`Event`] fields are inserted as [`GELF`] additional fields, `_field_name`.
-//! * [`Event`] field named `message` is renamed to `short_message`.
-//! * If `short_message` (or `message`) [`Event`] field is missing then `short_message` is
+//! [`Events`](tracing_core::Event) are encoded into [GELF format] as follows:
+//! * [Event] fields are inserted as [GELF] additional fields, `_field_name`.
+//! * [Event] field named `message` is renamed to `short_message`.
+//! * If `short_message` (or `message`) [Event] field is missing then `short_message` is
 //! set to the empty string.
-//! * [`Event`] fields whose names collide with [`GELF`] required fields are coerced
+//! * [Event] fields whose names collide with [GELF] required fields are coerced
 //! into the required types and overrides defaults given in the builder.
 //! * The hierarchy of spans is concatenated and inserted as `span_a:span_b:span_c` and
 //! inserted as an additional field `_span`.
 //!
-//! [`tracing`]: https://docs.rs/tracing
-//! [`Event`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
-//! [`Events`]: https://docs.rs/tracing/0.1.11/tracing/struct.Event.html
-//! [`GELF`]: https://docs.graylog.org/en/3.1/pages/gelf.html
+//! [GELF]: https://docs.graylog.org/en/3.1/pages/gelf.html
+//! [GELF format]: https://docs.graylog.org/en/3.1/pages/gelf.html
 
 mod connection;
 mod visitor;
@@ -82,8 +79,6 @@ const DEFAULT_BUFFER: usize = 512;
 const DEFAULT_VERSION: &str = "1.1";
 
 /// A [`Layer`] responsible for sending structured logs to Graylog.
-///
-/// [`Layer`]: https://docs.rs/tracing-subscriber/0.2.0-alpha.2/tracing_subscriber/layer/trait.Layer.html
 #[derive(Debug)]
 pub struct Logger {
     base_object: HashMap<Cow<'static, str>, Value>,
@@ -146,7 +141,11 @@ impl Default for Builder {
 
 impl Builder {
     /// Adds a persistent additional field to the GELF messages.
-    pub fn additional_field<K: Display, V: Into<Value>>(mut self, key: K, value: V) -> Self {
+    pub fn additional_field<K, V>(mut self, key: K, value: V) -> Self
+    where
+        K: Display,
+        V: Into<Value>,
+    {
         let coerced_value: Value = match value.into() {
             Value::Number(n) => Value::Number(n),
             Value::String(x) => Value::String(x),
@@ -158,13 +157,19 @@ impl Builder {
     }
 
     /// Sets the GELF version number. Defaults to "1.1".
-    pub fn version<V: ToString>(mut self, version: V) -> Self {
+    pub fn version<V>(mut self, version: V) -> Self
+    where
+        V: ToString,
+    {
         self.version = Some(version.to_string());
         self
     }
 
     /// Sets the `host` field. Defaults to the system's host name.
-    pub fn host<V: ToString>(mut self, host: V) -> Self {
+    pub fn host<V>(mut self, host: V) -> Self
+    where
+        V: ToString,
+    {
         self.host = Some(host.to_string());
         self
     }

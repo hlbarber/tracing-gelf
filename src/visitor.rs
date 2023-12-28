@@ -16,7 +16,7 @@ pub(crate) struct AdditionalFieldVisitor<'a> {
 }
 
 impl<'a> AdditionalFieldVisitor<'a> {
-    /// Create a new [`AdditionalFieldVisitor`] from a [`Map`].
+    /// Create a new [`AdditionalFieldVisitor`] from a [`HashMap`].
     pub(crate) fn new(object: &'a mut HashMap<Cow<'static, str>, Value>) -> Self {
         AdditionalFieldVisitor { object }
     }
