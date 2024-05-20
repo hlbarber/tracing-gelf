@@ -77,7 +77,7 @@ pub use connection::*;
 
 const DEFAULT_BUFFER: usize = 512;
 const DEFAULT_VERSION: &str = "1.1";
-const DEFAULT_SHORT_MESSAGE: &str = "no message";
+const DEFAULT_SHORT_MESSAGE: &str = "null";
 
 /// A [`Layer`] responsible for sending structured logs to Graylog.
 #[derive(Debug)]
