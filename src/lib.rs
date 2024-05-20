@@ -77,6 +77,7 @@ pub use connection::*;
 
 const DEFAULT_BUFFER: usize = 512;
 const DEFAULT_VERSION: &str = "1.1";
+const DEFAULT_SHORT_MESSAGE: &str = "no message";
 
 /// A [`Layer`] responsible for sending structured logs to Graylog.
 #[derive(Debug)]
@@ -156,6 +157,15 @@ impl Builder {
         self
     }
 
+    /// Sets the 'short_message' field's default value. Defaults to "no message".
+    ///
+    /// `Logger` uses the default value for `short_message` when an event does not specify
+    /// `message` or `short_message` in its fields.
+    pub fn default_short_message<V: ToString>(mut self, short_message: V) -> Self {
+        self.additional_fields.insert("short_message".into(), short_message.to_string().into());
+        self
+    }
+
     /// Sets the GELF version number. Defaults to "1.1".
     pub fn version<V>(mut self, version: V) -> Self
     where
@@ -224,6 +234,11 @@ impl Builder {
         // Add version
         let version = self.version.unwrap_or_else(|| DEFAULT_VERSION.to_string());
         base_object.insert("version".into(), version.into());
+
+        // Set default short_message if not specified
+        if !base_object.contains_key("short_message") {
+            base_object.insert("short_message".into(), DEFAULT_SHORT_MESSAGE.into());
+        }
 
         // Set buffer
         let buffer = self.buffer.unwrap_or(DEFAULT_BUFFER);
@@ -497,10 +512,6 @@ where
         // Append additional fields
         let mut add_field_visitor = visitor::AdditionalFieldVisitor::new(&mut object);
         event.record(&mut add_field_visitor);
-
-        if !object.contains_key("short_message") {
-            object.insert("short_message".into(), "".into());
-        }
 
         // Serialize
         let object = object
