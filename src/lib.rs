@@ -157,9 +157,9 @@ impl Builder {
         self
     }
 
-    /// Sets the 'short_message' field's default value. Defaults to "no message".
+    /// Sets the 'short_message' field's default value. Defaults to "null".
     ///
-    /// `Logger` uses the default value for `short_message` when an event does not specify
+    /// [`Logger`] uses the default value for `short_message` when an event does not specify
     /// `message` or `short_message` in its fields.
     pub fn default_short_message<V: ToString>(mut self, short_message: V) -> Self {
         self.additional_fields
