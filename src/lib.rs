@@ -59,9 +59,10 @@ mod visitor;
 use std::{borrow::Cow, collections::HashMap, fmt::Display};
 
 use bytes::Bytes;
-use futures_channel::mpsc;
 use serde_json::{map::Map, Value};
 use tokio::net::ToSocketAddrs;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing_core::{
     dispatcher::SetGlobalDefaultError,
     span::{Attributes, Id, Record},
@@ -248,7 +249,7 @@ impl Builder {
         let (sender, receiver) = mpsc::channel::<Bytes>(buffer);
         let handle = ConnectionHandle {
             addr,
-            receiver,
+            receiver: ReceiverStream::new(receiver),
             conn,
         };
         let logger = Logger {
