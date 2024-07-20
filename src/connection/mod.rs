@@ -4,8 +4,8 @@ mod udp;
 use std::{io, net::SocketAddr};
 
 use bytes::Bytes;
-use futures_channel::mpsc;
 use tokio::net::{lookup_host, ToSocketAddrs};
+use tokio_stream::wrappers::ReceiverStream;
 use tracing_core::subscriber::NoSubscriber;
 use tracing_futures::WithSubscriber;
 
@@ -26,7 +26,7 @@ pub struct ConnectionErrors(pub Vec<(SocketAddr, io::Error)>);
 #[must_use]
 pub struct ConnectionHandle<A, Conn> {
     pub(crate) addr: A,
-    pub(crate) receiver: mpsc::Receiver<Bytes>,
+    pub(crate) receiver: ReceiverStream<Bytes>,
     pub(crate) conn: Conn,
 }
 
