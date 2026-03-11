@@ -31,8 +31,9 @@ impl UdpConnection {
         // Writer
         let udp_stream = UdpFramed::new(udp_socket, BytesCodec::new());
         let (sink, _) = udp_stream.split();
+        // Remove null termination during map()
         receiver
-            .map(|bytes| Ok((bytes, addr)))
+            .map(|bytes| Ok((bytes.slice(..bytes.len() - 1), addr)))
             .forward(sink)
             .await?;
 
