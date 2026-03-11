@@ -522,6 +522,7 @@ where
             .collect();
         let final_object = Value::Object(object);
         let mut raw = serde_json::to_vec(&final_object).unwrap(); // This is safe
+        // Null termination is only required for messages send over TCP
         raw.push(0);
 
         // Send
